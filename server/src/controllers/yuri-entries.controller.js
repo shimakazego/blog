@@ -1,6 +1,44 @@
 import {db} from "../config/database.js"
 import {toSlug} from "../utils/slug.js"
 
+const DOUBAN_PROXY_HOSTS = new Set([
+    "img1.doubanio.com",
+    "img2.doubanio.com",
+    "img3.doubanio.com",
+    "img9.doubanio.com"
+])
+
+function buildRequestOrigin(req) {
+    return `${req.protocol}://${req.get("host")}`
+}
+
+function shouldProxyCover(url) {
+    try {
+        const parsed = new URL(url)
+        return DOUBAN_PROXY_HOSTS.has(parsed.hostname)
+    }
+    catch {
+        return false
+    }
+}
+
+function normalizeCoverUrl(req, url) {
+    if(!url) {
+        return url
+    }
+
+    if(url.startsWith("/")) {
+        return `${buildRequestOrigin(req)}${url}`
+    }
+
+    if(shouldProxyCover(url)) {
+        const baseOrigin = buildRequestOrigin(req)
+        return `${baseOrigin}/api/yuri-entries/cover-proxy?url=${encodeURIComponent(url)}`
+    }
+
+    return url
+}
+
 export const listYuriEntries = async (req, res) => {
     const status = req.query.status || "published"
 
@@ -9,35 +47,106 @@ export const listYuriEntries = async (req, res) => {
             y.id,
             y.name,
             y.slug,
+            y.title_original AS titleOriginal,
+            y.title_zh AS titleZh,
             y.kind,
+            y.entry_type AS entryType,
+            y.release_year AS releaseYear,
+            y.origin_country AS originCountry,
             y.byline,
+            y.summary,
             y.note,
             y.resource_url AS resourceUrl,
+            y.external_cover_url AS externalCoverUrl,
             y.score,
+            y.douban_subject_id AS doubanSubjectId,
+            y.douban_url AS doubanUrl,
+            y.is_curated AS isCurated,
             y.status,
             y.published_at AS publishedAt,
+            s.rating_value AS ratingValue,
+            s.rating_count AS ratingCount,
+            s.directors_text AS directorsText,
+            s.casts_text AS castsText,
+            s.genres_text AS genresText,
+            s.countries_text AS countriesText,
+            s.year_text AS yearText,
             c.name AS categoryName,
             m.url AS coverUrl
         FROM yuri_entries y
+        LEFT JOIN (
+            SELECT yes.*
+            FROM yuri_entry_source_snapshots yes
+            INNER JOIN (
+                SELECT yuri_entry_id, MAX(id) AS latest_id
+                FROM yuri_entry_source_snapshots
+                WHERE source_type = 'douban'
+                GROUP BY yuri_entry_id
+            ) latest ON latest.latest_id = yes.id
+        ) s ON s.yuri_entry_id = y.id
         LEFT JOIN categories c ON c.id = y.category_id
         LEFT JOIN media_files m ON m.id = y.cover_media_id
         WHERE y.status = ?
-        ORDER BY COALESCE(y.published_at, y.created_at) DESC`,
+        ORDER BY
+            y.release_year DESC,
+            COALESCE(y.published_at, y.created_at) DESC,
+            y.id DESC`,
         [status]
     )
 
-    res.json(rows)
+    res.json(rows.map((row) => ({
+        ...row,
+        externalCoverUrl: normalizeCoverUrl(req, row.externalCoverUrl)
+    })))
+}
+
+export const proxyYuriCover = async (req, res) => {
+    const targetUrl = String(req.query.url || "").trim()
+
+    if(!shouldProxyCover(targetUrl)) {
+        return res.status(400).json({message: "unsupported cover host"})
+    }
+
+    const response = await fetch(targetUrl, {
+        headers: {
+            "accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "referer": "https://movie.douban.com/",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+        }
+    })
+
+    if(!response.ok) {
+        return res.status(response.status).json({message: `failed to fetch cover: ${response.status}`})
+    }
+
+    const contentType = response.headers.get("content-type") || "image/jpeg"
+    const buffer = Buffer.from(await response.arrayBuffer())
+
+    res.setHeader("content-type", contentType)
+    res.setHeader("cache-control", "public, max-age=86400")
+    res.send(buffer)
 }
 
 export const createYuriEntry = async (req, res) => {
     const {
         name,
         slug,
+        titleOriginal = null,
+        titleZh = null,
         kind = null,
+        entryType = null,
+        releaseYear = null,
+        originCountry = null,
         byline = null,
+        summary = null,
         note = null,
         resourceUrl = null,
+        externalCoverUrl = null,
         score = null,
+        doubanSubjectId = null,
+        doubanUrl = null,
+        isCurated = false,
         status = "draft",
         categoryId = null,
         coverMediaId = null,
@@ -52,9 +161,53 @@ export const createYuriEntry = async (req, res) => {
 
     const [result] = await db.query(
         `INSERT INTO yuri_entries
-            (name, slug, kind, byline, note, resource_url, score, status, category_id, cover_media_id, published_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [name, finalSlug, kind, byline, note, resourceUrl, score, status, categoryId, coverMediaId, publishedAt]
+            (
+                name,
+                slug,
+                title_original,
+                title_zh,
+                kind,
+                entry_type,
+                release_year,
+                origin_country,
+                byline,
+                summary,
+                note,
+                resource_url,
+                external_cover_url,
+                score,
+                douban_subject_id,
+                douban_url,
+                is_curated,
+                status,
+                category_id,
+                cover_media_id,
+                published_at
+            )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            name,
+            finalSlug,
+            titleOriginal,
+            titleZh,
+            kind,
+            entryType,
+            releaseYear,
+            originCountry,
+            byline,
+            summary,
+            note,
+            resourceUrl,
+            externalCoverUrl,
+            score,
+            doubanSubjectId,
+            doubanUrl,
+            Number(Boolean(isCurated)),
+            status,
+            categoryId,
+            coverMediaId,
+            publishedAt
+        ]
     )
 
     res.status(201).json({

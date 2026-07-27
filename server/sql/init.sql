@@ -107,11 +107,21 @@ CREATE TABLE IF NOT EXISTS yuri_entries (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   name VARCHAR(255) NOT NULL,
   slug VARCHAR(255) NOT NULL,
+  title_original VARCHAR(255) NULL,
+  title_zh VARCHAR(255) NULL,
   kind VARCHAR(120) NULL,
+  entry_type VARCHAR(80) NULL,
+  release_year SMALLINT NULL,
+  origin_country VARCHAR(120) NULL,
   byline VARCHAR(255) NULL,
+  summary TEXT NULL,
   note TEXT NULL,
   resource_url VARCHAR(255) NULL,
+  external_cover_url VARCHAR(500) NULL,
   score VARCHAR(20) NULL,
+  douban_subject_id VARCHAR(50) NULL,
+  douban_url VARCHAR(500) NULL,
+  is_curated TINYINT(1) NOT NULL DEFAULT 0,
   cover_media_id BIGINT UNSIGNED NULL,
   category_id BIGINT UNSIGNED NULL,
   status ENUM('draft', 'published') NOT NULL DEFAULT 'draft',
@@ -120,6 +130,7 @@ CREATE TABLE IF NOT EXISTS yuri_entries (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uk_yuri_entries_slug (slug),
+  UNIQUE KEY uk_yuri_entries_douban_subject_id (douban_subject_id),
   CONSTRAINT fk_yuri_entries_cover_media
     FOREIGN KEY (cover_media_id) REFERENCES media_files(id)
     ON DELETE SET NULL ON UPDATE CASCADE,
@@ -137,6 +148,36 @@ CREATE TABLE IF NOT EXISTS yuri_entry_tags (
     ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_yuri_entry_tags_tag
     FOREIGN KEY (tag_id) REFERENCES tags(id)
+    ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS yuri_entry_source_snapshots (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  yuri_entry_id BIGINT UNSIGNED NOT NULL,
+  source_type VARCHAR(50) NOT NULL DEFAULT 'douban',
+  source_subject_id VARCHAR(50) NULL,
+  source_url VARCHAR(500) NULL,
+  source_list_id VARCHAR(50) NULL,
+  source_list_name VARCHAR(255) NULL,
+  rating_value DECIMAL(3,1) NULL,
+  rating_count INT UNSIGNED NULL,
+  directors_text TEXT NULL,
+  casts_text TEXT NULL,
+  genres_text VARCHAR(255) NULL,
+  countries_text VARCHAR(255) NULL,
+  year_text VARCHAR(20) NULL,
+  poster_url VARCHAR(500) NULL,
+  comment_text TEXT NULL,
+  comment_created_at DATETIME NULL,
+  raw_payload JSON NULL,
+  last_synced_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_yuri_entry_source_snapshots_entry_source (yuri_entry_id, source_type),
+  KEY idx_yuri_entry_source_snapshots_subject (source_type, source_subject_id),
+  CONSTRAINT fk_yuri_entry_source_snapshots_entry
+    FOREIGN KEY (yuri_entry_id) REFERENCES yuri_entries(id)
     ON DELETE CASCADE ON UPDATE CASCADE
 );
 
