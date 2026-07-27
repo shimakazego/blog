@@ -32,7 +32,7 @@
 <script setup>
 import {computed, onMounted, ref, watch} from "vue"
 import {useLayout} from "/src/composables/layout.js"
-import Modal from '/node_modules/bootstrap/js/src/modal'
+import Modal from 'bootstrap/js/src/modal'
 import ProjectInfo from "/src/vue/components/projects/ProjectInfo.vue"
 import ProjectInfoContent from "/src/vue/components/projects/ProjectInfoContent.vue"
 

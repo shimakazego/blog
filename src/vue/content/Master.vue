@@ -1,7 +1,7 @@
 <template>
     <!-- Navigation -->
     <Navigation logo="images/logo/agency-logo-small.png"
-                label="*Foxy* Template"/>
+                label="*菅名のBlog*"/>
 
     <!-- Content Display -->
     <router-view/>
@@ -10,48 +10,47 @@
     <Footer>
         <FooterBlock :darken="false"
                      :row="true">
-            <FooterColumn title="About"
+            <FooterColumn title="关于本站"
                           faIcon="pi pi-lightbulb me-2"
                           :description="[
-                              `This template is maintained by Ryan Balieiro and is based on the <a href='https://vuejs.org/'>Vue</a> framework and the <a href='https://getbootstrap.com/'>Bootstrap</a> framework.`
+                              `这里是菅名のBlog 的前端起点，后续会逐步补充文章、百合动漫、游戏攻略和 Web 玩具。`
                           ]"
                           :links="[
-                              {label: `Privacy Policy`, href: `/privacy-policy`, faIcon: null},
-                              {label: `License`, href: `/license`, faIcon: null},
-                              {label: `Github Repo`, href: `https://github.com/ryanbalieiro/vue-agency-landing-page-template`, faIcon: null},
+                              {label: `文章归档`, href: `#archive`, faIcon: null},
+                              {label: `百合动漫`, href: `#yuri`, faIcon: null},
+                              {label: `游戏攻略`, href: `#game-guides`, faIcon: null},
                           ]"
                           :displayLinksAsButtons="false"/>
 
-            <FooterColumn title="Connect With Us"
+            <FooterColumn title="站点入口"
                           faIcon=""
                           :description="[
                           ]"
                           :links="[
-                              {label: `Linkedin`, href: `https://linkedin.com`, faIcon:`fa-brands fa-linkedin`},
-                              {label: `Twitter`, href: `https://x.com`, faIcon:`fa-brands fa-x-twitter`},
-                              {label: `TikTok`, href: `https://tiktok.com`, faIcon:`fa-brands fa-tiktok`},
-                              {label: `Spotify`, href: `https://spotify.com`, faIcon:`fa-brands fa-spotify`},
+                              {label: `GitHub`, href: `https://github.com/shimakazego`, faIcon:`fa-brands fa-github`},
+                              {label: `Bilibili`, href: `https://www.bilibili.com`, faIcon:`fa-brands fa-bilibili`},
+                              {label: `Dnspod`, href: `https://console.dnspod.cn/dns/list`, faIcon:`pi pi-globe`},
                           ]"
                           :displayLinksAsButtons="true"/>
 
-            <FooterColumn title="Contact Info"
+            <FooterColumn title="当前规划"
                           faIcon="pi pi-envelope me-2 pe-1"
                           :description="[
-                              `999 Vue Developer's Avenue, 4A Suite 32`,
-                              `Cupertino – CA 01235`
+                              `先把静态前端页面做漂亮，再逐步接入轻量后端和文件服务。`,
+                              `文章归档和游戏攻略后续大概率需要数据库支持。`
                           ]"
                           :links="[
-                              {label: `(555) 555-1234`, href: `tel:123456789`, faIcon: 'pi pi-phone'},
-                              {label: `contact@foxyagency.com`, href: `mailto:foxy@agency.com`, faIcon: 'fa-regular fa-envelope'},
+                              {label: `NAS 部署`, href: `#fun`, faIcon: 'pi pi-server'},
+                              {label: `关于博主`, href: `#about`, faIcon: 'pi pi-id-card'},
                           ]"
                           :displayLinksAsButtons="false"/>
         </FooterBlock>
 
         <FooterBlock :darken="true"
                      :row="false">
-            <FooterCopyright holder="Ryan Balieiro"
-                             url="https://github.com/ryanbalieiro"
-                             license="Distributed Under the MIT License"/>
+            <FooterCopyright holder="菅名のBlog"
+                             url="https://github.com/shimakazego"
+                             license="All Rights Reserved."/>
         </FooterBlock>
     </Footer>
 </template>

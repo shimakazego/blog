@@ -20,6 +20,7 @@ const layout = useLayout()
  * @type {{value: SectionInfo[]}}
  */
 const currentPageSections = inject("currentPageSections")
+const currentPageActiveSectionId = inject("currentPageActiveSectionId")
 
 const LoaderAnimationStatus = inject("LoaderAnimationStatus")
 const loaderAnimationStatus = inject("loaderAnimationStatus")
@@ -41,7 +42,7 @@ const linkList = computed(() => {
             path: section.hash,
             label: section.name,
             faIcon: section.faIcon,
-            isActive: currentSection.value?.id === section.id
+            isActive: (currentPageActiveSectionId?.value || currentSection.value?.id) === section.id
         }
     }).filter(section => section.label && section.path)
 })

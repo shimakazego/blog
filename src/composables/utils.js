@@ -78,7 +78,11 @@ export function useUtils() {
             "text-primary-light" :
             "text-primary"
 
-        return title.replace(/\*(.*?)\*/g, `<span class="${titleClass}">$1</span>`)
+        const withEmphasis = title.replace(/\*(.*?)\*/g, `<span class="${titleClass}">$1</span>`)
+
+        return withEmphasis
+            .replace(/（([^（）]+)）/g, `<span class="foxy-hover-note" title="$1">（$1）</span>`)
+            .replace(/\(([^()]+)\)/g, `<span class="foxy-hover-note" title="$1">($1)</span>`)
     }
 
     /**

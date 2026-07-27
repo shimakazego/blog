@@ -1,0 +1,41 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: blog-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql:/docker-entrypoint-initdb.d:ro
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: blog-express
+    restart: unless-stopped
+    depends_on:
+      - mysql
+    env_file:
+      - .env
+    environment:
+      PORT: 3001
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      UPLOAD_DIR: /app/storage/uploads
+      APP_ORIGIN: ${APP_ORIGIN}
+    volumes:
+      - uploads_data:/app/storage/uploads
+    ports:
+      - "3001:3001"
+
+volumes:
+  mysql_data:
+  uploads_data:

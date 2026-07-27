@@ -20,15 +20,10 @@
 
 <script setup>
 import {computed} from "vue"
-import {useLayout} from "/src/composables/layout.js"
-import {useRoute} from "vue-router"
 
 const props = defineProps({
     url: String
 })
-
-const layout = useLayout()
-const route = useRoute()
 
 const isRouterLink = computed(() => {
     return String(props.url).charAt(0) === "/"
@@ -53,10 +48,6 @@ const _onHashLinkClicked = () => {
     }
 
     window.location.hash = props.url
-    const sectionDiv = document.querySelector(props.url)
-    if(sectionDiv) {
-        layout.scrollIntoView(sectionDiv)
-    }
 }
 </script>
 

@@ -24,6 +24,7 @@ const LoaderAnimationStatus = {
  * Global state FLAGS
  **/
 const currentPageSections = ref([])
+const currentPageActiveSectionId = ref(null)
 const loaderActive = ref(true)
 const loaderPageRefreshCount = ref(0)
 const loaderSmoothTransitionEnabled = ref(true)
@@ -45,6 +46,7 @@ provide("loaderEnabled", loaderEnabled)
 provide("LoaderAnimationStatus", LoaderAnimationStatus)
 
 provide("currentPageSections", currentPageSections)
+provide("currentPageActiveSectionId", currentPageActiveSectionId)
 provide("loaderActive", loaderActive)
 provide("loaderPageRefreshCount", loaderPageRefreshCount)
 provide("loaderSmoothTransitionEnabled", loaderSmoothTransitionEnabled)

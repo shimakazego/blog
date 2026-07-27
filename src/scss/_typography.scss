@@ -63,3 +63,10 @@ a {
 p {
     color: $text-normal;
 }
+
+.foxy-hover-note {
+    cursor: help;
+    border-bottom: 1px dotted currentColor;
+    text-decoration: none;
+    white-space: nowrap;
+}
