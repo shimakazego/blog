@@ -4,12 +4,10 @@ import {createRouter, createWebHistory} from "vue-router"
 import {createPinia} from "pinia"
 import App from "/src/vue/stack/App.vue"
 import HomePage from "/src/vue/content/pages/HomePage.vue"
-import LicensePage from "/src/vue/content/pages/LicensePage.vue"
-import PolicyPage from "/src/vue/content/pages/PolicyPage.vue"
-import ZzzCalculatorPage from "/src/vue/content/pages/zzz/ZzzCalculatorPage.vue"
-import ZzzCrisisPage from "/src/vue/content/pages/zzz/ZzzCrisisPage.vue"
-import ZzzDeductionPage from "/src/vue/content/pages/zzz/ZzzDeductionPage.vue"
-import ZzzDefensePage from "/src/vue/content/pages/zzz/ZzzDefensePage.vue"
+
+const ZzzCalculatorPage = () => import("/src/vue/content/pages/zzz/ZzzCalculatorPage.vue")
+const ZzzCrisisPage = () => import("/src/vue/content/pages/zzz/ZzzCrisisPage.vue")
+const ZzzDefensePage = () => import("/src/vue/content/pages/zzz/ZzzDefensePage.vue")
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
@@ -26,36 +24,6 @@ const router = createRouter({
                 breadcrumbs: []
             }
         },
-
-        // {
-        //     path: "/privacy-policy",
-        //     name: "policy",
-        //     component: PolicyPage,
-        //     props: {
-        //         label: "Privacy Policy",
-        //         faIcon: "pi pi-hammer",
-        //         inPageNavbar: false,
-        //         shouldAlwaysPreload: false,
-        //         breadcrumbs: [
-        //             "/"
-        //         ]
-        //     }
-        // },
-
-        // {
-        //     path: "/license",
-        //     name: "license",
-        //     component: LicensePage,
-        //     props: {
-        //         label: "License",
-        //         faIcon: "pi pi-briefcase",
-        //         inPageNavbar: false,
-        //         shouldAlwaysPreload: false,
-        //         breadcrumbs: [
-        //             "/"
-        //         ]
-        //     }
-        // },
 
         {
             path: "/zzz/crisis-assault",
@@ -82,19 +50,6 @@ const router = createRouter({
                 breadcrumbs: ["/#game-guides"]
             }
         },
-
-        // {
-        //     path: "/zzz/deduction",
-        //     name: "zzz-deduction",
-        //     component: ZzzDeductionPage,
-        //     props: {
-        //         label: "临界推演",
-        //         faIcon: "pi pi-sitemap",
-        //         inPageNavbar: false,
-        //         shouldAlwaysPreload: false,
-        //         breadcrumbs: ["/#game-guides"]
-        //     }
-        // },
 
         {
             path: "/zzz/calculator",
