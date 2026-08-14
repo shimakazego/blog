@@ -1,12 +1,11 @@
 <template>
     <!-- Heading Section -->
     <PageHeader :id="props.id"
-                title="*Foxy* Landing Page"
-                subtitle="An agency template by <strong>Ryan Balieiro</strong> – made with <strong>Vue3</strong> and <strong>Bootstrap 5</strong>"
+                title="菅名のBlog"
                 logo-url="/images/logo/agency-logo.png"
                 :show-button="true"
                 button-icon="fa-solid fa-search"
-                button-label="Find Out More"
+                button-label="关于我"
                 button-url="#about"/>
 </template>
 

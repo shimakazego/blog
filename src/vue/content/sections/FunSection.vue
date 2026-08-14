@@ -15,7 +15,7 @@
 
                         <div class="fun-feature-title">黑塔转圈圈</div>
                         <p class="fun-feature-text">
-                            点一下转一圈，轻松解压，作为“开心一下”里的第一个入口非常合适。
+                            点一下转一圈，轻松解压。
                         </p>
 
                         <div class="fun-feature-actions">

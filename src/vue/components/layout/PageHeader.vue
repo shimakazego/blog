@@ -2,15 +2,16 @@
     <header :id="id"
             class="foxy-header">
         <BackgroundPromo :faded="false"/>
+        <SakuraOverlay :count="18"/>
 
         <!-- Content -->
         <div class="container-xxl">
             <article class="foxy-hero-header">
                 <!-- Logo -->
-                <ImageView :src="logoUrl"
+                <!-- <ImageView :src="logoUrl"
                            :spinner-enabled="true"
                            :alt="title"
-                           class="foxy-hero-header-logo"/>
+                           class="foxy-hero-header-logo"/> -->
 
                 <!-- Texts -->
                 <h1 class="heading"
@@ -32,6 +33,7 @@
 
 <script setup>
 import BackgroundPromo from "/src/vue/components/layout/BackgroundPromo.vue"
+import SakuraOverlay from "/src/vue/components/effects/SakuraOverlay.vue"
 import ImageView from "/src/vue/components/generic/ImageView.vue"
 import {useUtils} from "/src/composables/utils.js"
 import {computed} from "vue"
@@ -77,6 +79,7 @@ header.foxy-header {
 
     position: relative;
     height: var(--height);
+    overflow: hidden;
 
     div.container-xxl {
         display: flex;
@@ -87,6 +90,8 @@ header.foxy-header {
         padding-left: 1rem;
         padding-right: 1rem;
         padding-bottom: 2rem;
+        position: relative;
+        z-index: 1;
     }
 
     article.foxy-hero-header {

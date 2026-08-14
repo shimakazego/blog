@@ -18,8 +18,8 @@ import YuriSection from "/src/vue/content/sections/YuriSection.vue"
 const sections = [
     new SectionInfo('hero',         HeroSection,            '首页',          'pi pi-home'),
     // new SectionInfo('archive',      ArchiveSection,         '文章归档',      'pi pi-book'),
+    new SectionInfo('game-guides',  GameGuideSection,       '绝区零工具箱',      'pi pi-play-circle'),
     new SectionInfo('yuri',         YuriSection,            '百合动漫',      'pi pi-heart'),
-    new SectionInfo('game-guides',  GameGuideSection,       '游戏攻略',      'pi pi-play-circle'),
     new SectionInfo('fun',          FunSection,             '开心一下',      'pi pi-sparkles'),
     new SectionInfo('about',        AboutMeSection,         '关于博主',      'pi pi-id-card')
 ]

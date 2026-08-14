@@ -19,9 +19,10 @@ div.foxy-promo-background {
     width: 100%;
     z-index: -1;
 
-    background-image: url('/src/assets/header-bg.jpeg');
+    background-image: url('/images/logo/background.jpeg');
     background-position: center;
     background-size: cover;
+    filter: saturate(1.18) contrast(1.08) brightness(1.03);
 }
 
 div.foxy-promo-background-overlay-default {
@@ -29,8 +30,8 @@ div.foxy-promo-background-overlay-default {
     height: 100%;
     width: 100%;
 
-    background-image: -webkit-gradient(linear, left top, left bottom, from(rgba(30, 30, 30, 0.73)), color-stop(70%, rgba(30, 30, 30, 0.86)), color-stop(80%, rgba(30, 30, 30, 0.99)), to(rgba(30, 30, 30, 1)));
-    background-image: linear-gradient(180deg, rgba(30, 30, 30, 0.73) 0%, rgba(30, 30, 30, 0.86) 30%, rgba(30, 30, 30, 0.99) 60%, rgba(30, 30, 30, 1) 100%);
+    background-image: -webkit-gradient(linear, left top, left bottom, from(rgba(18, 22, 32, 0.34)), color-stop(40%, rgba(18, 22, 32, 0.46)), color-stop(70%, rgba(18, 22, 32, 0.68)), to(rgba(18, 22, 32, 0.9)));
+    background-image: linear-gradient(180deg, rgba(18, 22, 32, 0.34) 0%, rgba(18, 22, 32, 0.46) 40%, rgba(18, 22, 32, 0.68) 70%, rgba(18, 22, 32, 0.9) 100%);
 }
 
 div.foxy-promo-background-overlay-faded {
@@ -38,7 +39,7 @@ div.foxy-promo-background-overlay-faded {
     height: 100%;
     width: 100%;
 
-    background-image: -webkit-gradient(linear, left top, left bottom, from(rgba(30, 30, 30, 0.83)), color-stop(70%, rgba(30, 30, 30, 0.93)), color-stop(80%, rgba(30, 30, 30, 1)), to(rgba(30, 30, 30, 1)));
-    background-image: linear-gradient(180deg, rgba(30, 30, 30, 0.83) 0%, rgba(30, 30, 30, 0.93) 30%, rgba(30, 30, 30, 0.99) 60%, rgba(30, 30, 30, 1) 100%);
+    background-image: -webkit-gradient(linear, left top, left bottom, from(rgba(18, 22, 32, 0.48)), color-stop(40%, rgba(18, 22, 32, 0.58)), color-stop(70%, rgba(18, 22, 32, 0.76)), to(rgba(18, 22, 32, 0.94)));
+    background-image: linear-gradient(180deg, rgba(18, 22, 32, 0.48) 0%, rgba(18, 22, 32, 0.58) 40%, rgba(18, 22, 32, 0.76) 70%, rgba(18, 22, 32, 0.94) 100%);
 }
 </style>
