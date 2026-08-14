@@ -1,283 +1,404 @@
 <template>
-    <PageSection :id="props.id"
-                 variant="default">
-        <PageSectionHeader title="游戏攻略"
-                           subtitle="收集星铁和绝区零的高难入口，先做成可持续更新的情报板。" />
+  <PageSection :id="props.id" variant="default" class="zzz-guide-section">
+    <PageSectionContent>
+      <main class="zzz-home">
+        <div class="zzz-home-bg" aria-hidden="true" />
 
-        <PageSectionContent>
-            <div class="game-layout row g-4">
-                <div class="col-12 col-xl-7">
-                    <div class="game-board">
-                        <div class="game-board-head">
-                            <div>
-                                <div class="game-kicker">Video Tracker</div>
-                                <h2 class="game-title">最新高难关卡追踪板</h2>
-                            </div>
-                            <span class="badge rounded-pill text-bg-warning game-badge">时效优先</span>
-                        </div>
-
-                        <div class="game-feed">
-                            <article v-for="guide in gameGuidesState"
-                                     :key="guide.id ?? guide.title"
-                                     class="game-item">
-                                <div class="game-item-meta">
-                                    <span class="game-game">{{ guide.game }}</span>
-                                    <span class="game-date">{{ guide.date }}</span>
-                                </div>
-
-                                <h3 class="game-item-title">{{ guide.title }}</h3>
-                                <p class="game-item-summary">{{ guide.summary }}</p>
-
-                                <div class="game-item-footer">
-                                    <div class="game-tags">
-                                        <span v-for="tag in guide.tags"
-                                              :key="tag"
-                                              class="badge rounded-pill text-bg-light game-tag">
-                                            {{ tag }}
-                                        </span>
-                                    </div>
-
-                                    <a :href="guide.url"
-                                       target="_blank"
-                                       rel="noopener noreferrer"
-                                       class="game-link">
-                                        查看入口
-                                    </a>
-                                </div>
-                            </article>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="col-12 col-xl-5">
-                    <div class="game-side h-100">
-                        <div class="game-side-card">
-                            <div class="game-kicker">玩法说明</div>
-                            <h3 class="game-side-title">这里会按版本和活动逐步补全</h3>
-                            <p class="game-side-text">
-                                当前接口已经接到 NAS 后端，后面可以继续扩展成后台录入、抓取来源、版本筛选和过期标记。
-                            </p>
-                        </div>
-
-                        <div class="game-side-card game-side-card-dark">
-                            <div class="game-kicker">字段建议</div>
-                            <ul class="game-list">
-                                <li>游戏名、版本号、关卡名</li>
-                                <li>视频链接、来源、发布时间</li>
-                                <li>难度、配队门槛、备注</li>
-                                <li>是否过期、是否推荐</li>
-                            </ul>
-                        </div>
-
-                        <div class="game-side-card">
-                            <div class="game-kicker">后续方向</div>
-                            <div class="game-side-pill">适合继续加版本筛选、搜索和简易后台</div>
-                        </div>
-                    </div>
-                </div>
+        <div class="zzz-home-inner">
+          <div class="zzz-toolbar">
+            <div>
+              <span class="zzz-eyebrow">菅名のBlog / GAME GUIDE</span>
+              <p class="zzz-status">
+                <span class="zzz-status-dot" />
+                {{ apiStatus }}
+              </p>
             </div>
-        </PageSectionContent>
-    </PageSection>
+          </div>
+
+          <header class="zzz-hero">
+            <!-- <span class="zzz-tag">非官方 · 玩家自制工具站</span> -->
+            <h1 class="zzz-display zzz-title">ZZZ-HP</h1>
+            <p class="zzz-hero-copy">
+              <span style="background-color: #91bc00">绝区零 · 数据查询与伤害计算工具</span>
+              <img src="/zzz-assets/Bangboo.gif" alt="" class="zzz-bangboo" />
+            </p>
+          </header>
+
+          <nav class="zzz-mode-grid" aria-label="ZZZ-HP 公开功能">
+            <RouterLink
+              v-for="mode in modes"
+              :key="mode.path"
+              :to="mode.path"
+              class="zzz-mode-card"
+            >
+              <span class="zzz-mode-number zzz-display">{{ mode.number }}</span>
+              <span class="zzz-mode-body">
+                <strong>{{ mode.title }}</strong>
+                <small>{{ mode.english }}</small>
+                <em>{{ mode.description }}</em>
+              </span>
+              <span class="zzz-mode-arrow">↗</span>
+            </RouterLink>
+          </nav>
+
+          <section class="zzz-summary-panel">
+            <!-- <p>
+              这里作为 ZZZ-HP 在菅名のBlog 内的入口页。点击上方卡片会进入独立页面，
+              页面内提供返回按钮，回到博客的游戏攻略锚点。
+            </p> -->
+            <div class="zzz-stat-row">
+              <div v-for="item in statCards" :key="item.label">
+                <strong>{{ item.value }}</strong>
+                <span>{{ item.label }}</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </PageSectionContent>
+  </PageSection>
 </template>
 
 <script setup>
-import {onMounted, ref} from "vue"
-import PageSection from "/src/vue/components/layout/PageSection.vue"
-import PageSectionHeader from "/src/vue/components/layout/PageSectionHeader.vue"
-import PageSectionContent from "/src/vue/components/layout/PageSectionContent.vue"
-import {gameGuides as gameGuideFallbacks} from "/src/data/blogMockData.js"
-import {listGameGuides} from "/src/data/blogApi.js"
+import { computed, onMounted, ref } from "vue";
+import PageSection from "/src/vue/components/layout/PageSection.vue";
+import PageSectionContent from "/src/vue/components/layout/PageSectionContent.vue";
+import { getZzzOverview } from "/src/data/zzzApi.js";
 
 const props = defineProps({
-    id: String
-})
+  id: String,
+});
 
-const gameGuidesState = ref([...gameGuideFallbacks])
+const apiStatus = ref("正在连接 NAS API");
+const stats = ref({
+  agents: "—",
+  wengines: "—",
+  defenseSeasons: "—",
+  crisisSeasons: "—"
+});
 
-function formatDate(value) {
-    if(!value) {
-        return "持续更新"
-    }
+const statCards = computed(() => [
+  { label: "代理人资料", value: stats.value.agents },
+  { label: "音擎资料", value: stats.value.wengines },
+  { label: "防卫赛季", value: stats.value.defenseSeasons },
+  { label: "危局赛季", value: stats.value.crisisSeasons }
+]);
 
-    const date = new Date(value)
-    if(Number.isNaN(date.getTime())) {
-        return value
-    }
+const modes = [
+  {
+    id: "crisis",
+    path: "/zzz/crisis-assault",
+    number: "01",
+    title: "危局强袭",
+    english: "CRISIS ASSAULT",
+    description: "往期血量、分数反推与期数对比",
+  },
+  {
+    id: "defense",
+    path: "/zzz/defense",
+    number: "02",
+    title: "式舆防卫战",
+    english: "SHIYU DEFENSE",
+    description: "防卫战数据、房间与敌人信息",
+  },
+  {
+    id: "calculator",
+    path: "/zzz/calculator",
+    number: "03",
+    title: "角色计算器",
+    english: "DAMAGE CALC",
+    description: "面板、词条与伤害计算",
+  },
+  // {
+  //   id: "deduction",
+  //   path: "/zzz/deduction",
+  //   number: "04",
+  //   title: "临界推演",
+  //   english: "CRITICAL DEDUCTION",
+  //   description: "推演模式数据浏览",
+  // },
+  
+];
 
-    return date.toISOString().slice(0, 10)
+async function loadZzzOverview() {
+  try {
+    const overview = await getZzzOverview();
+    const agents = overview.agents.length;
+    const wengines = overview.wengines.length;
+    const defenseSeasons =
+      overview.newDefenseSeasons.length + overview.oldDefenseSeasons.length;
+    const crisisSeasons = overview.crisisSeasons.length;
+
+    stats.value.agents = String(agents);
+    stats.value.wengines = String(wengines);
+    stats.value.defenseSeasons = String(defenseSeasons);
+    stats.value.crisisSeasons = String(crisisSeasons);
+    apiStatus.value = "NAS API 已连接";
+  } catch (error) {
+    console.warn("ZZZ-HP overview API is unavailable:", error);
+    apiStatus.value = "演示模式 · 等待 NAS API";
+  }
 }
 
-function buildGuideTags(guide) {
-    return [guide.versionLabel, guide.difficulty, guide.sourceName]
-        .filter(Boolean)
-}
-
-function normalizeGuide(guide) {
-    return {
-        id: guide.id,
-        game: guide.game,
-        title: guide.title,
-        date: formatDate(guide.publishedAt),
-        status: guide.status,
-        source: guide.sourceName || "外部来源",
-        url: guide.sourceUrl || "#",
-        summary: guide.summary || "这条攻略还没有补充摘要。",
-        tags: buildGuideTags(guide)
-    }
-}
-
-onMounted(async () => {
-    try {
-        const guides = await listGameGuides({status: "published"})
-        if(guides.length) {
-            gameGuidesState.value = guides.map(normalizeGuide)
-        }
-    }
-    catch (error) {
-        console.error("Failed to load game guides:", error)
-    }
-})
+onMounted(loadZzzOverview);
 </script>
 
 <style lang="scss" scoped>
-@import "/src/scss/_theming.scss";
-
-.game-board,
-.game-side-card {
-    border-radius: 1.75rem;
-    border: 1px solid rgba($dark, 0.08);
-    background: linear-gradient(180deg, rgba($white, 0.98), rgba($light-1, 0.9));
-    box-shadow: 0 18px 40px rgba($dark, 0.08);
+.zzz-guide-section {
+  background: #050505;
+  padding-top: 0 !important;
 }
 
-.game-board {
-    padding: 1.6rem;
+.zzz-home {
+  --zzz-yellow: #fbfe00;
+  --zzz-bg: #050505;
+  --zzz-fg: #f5f5f0;
+  --zzz-dim: rgba(245, 245, 240, 0.58);
+  --zzz-card: #171717;
+  --zzz-line: rgba(255, 255, 255, 0.18);
+  position: relative;
+  min-height: 72vh;
+  overflow: hidden;
+  border: 1px solid #000;
+  background: var(--zzz-bg);
+  color: var(--zzz-fg);
 }
 
-.game-board-head {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    align-items: flex-start;
-    margin-bottom: 1rem;
+.zzz-home-bg {
+  position: absolute;
+  inset: -8%;
+  opacity: 0.24;
+  background: url("/zzz-assets/bg-collage.webp") center / cover no-repeat;
+  animation: zzz-drift 18s ease-in-out infinite alternate;
 }
 
-.game-kicker {
-    color: $text-muted;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    font-size: 0.75rem;
+.zzz-home-inner {
+  position: relative;
+  z-index: 1;
+  width: min(1100px, 100%);
+  margin: 0 auto;
+  padding: clamp(2rem, 6vw, 5rem) clamp(1rem, 4vw, 3rem);
 }
 
-.game-title,
-.game-side-title {
-    margin: 0.5rem 0 0;
-    line-height: 1.12;
+.zzz-toolbar,
+.zzz-module-heading,
+.zzz-changelog-heading,
+.zzz-changelog-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
-.game-feed {
-    display: grid;
-    gap: 1rem;
+.zzz-eyebrow {
+  display: block;
+  color: var(--zzz-dim);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
-.game-item {
-    padding: 1.2rem 1.15rem;
-    border-radius: 1.3rem;
-    background: rgba($light-1, 0.9);
-    border: 1px solid rgba($dark, 0.05);
+.zzz-status {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.45rem 0 0;
+  color: var(--zzz-dim);
+  font-size: 0.8rem;
 }
 
-.game-item-meta,
-.game-item-footer {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    align-items: center;
+.zzz-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #91bc00;
 }
 
-.game-item-meta {
-    color: $text-muted;
-    font-size: 0.9rem;
+.zzz-hero {
+  margin: clamp(3rem, 3vw, 7rem) 0 2rem;
 }
 
-.game-game {
-    font-weight: 700;
-    color: $primary;
+.zzz-tag {
+  display: inline-flex;
+  padding: 0.25rem 0.8rem;
+  background: var(--zzz-yellow);
+  color: #090909;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
 }
 
-.game-item-title {
-    margin: 0.7rem 0 0;
+.zzz-display {
+  font-family: "Archivo Black", "Microsoft YaHei", sans-serif;
+  font-weight: 900;
 }
 
-.game-item-summary {
-    margin: 0.7rem 0 0;
-    color: $text-muted;
-    line-height: 1.8;
+.zzz-title {
+  display: inline-block;
+  margin: 0.75rem 0 0;
+  padding: 0.02em 0.14em 0.06em;
+  background: var(--zzz-yellow);
+  color: #090909;
+  font-size: clamp(3.8rem, 12vw, 8rem);
+  line-height: 0.95;
+  transform: skew(-7deg);
 }
 
-.game-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+.zzz-hero-copy {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin: 1rem 0 0;
+  font-size: clamp(1rem, 2.2vw, 1.35rem);
+  font-weight: 800;
+  letter-spacing: 0.12em;
 }
 
-.game-link {
-    white-space: nowrap;
-    color: $primary;
-    font-weight: 700;
+.zzz-bangboo {
+  width: 2.5rem;
+  height: 2.5rem;
+  object-fit: contain;
 }
 
-.game-side {
-    display: grid;
-    gap: 1rem;
+.zzz-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
-.game-side-card {
-    padding: 1.35rem;
+.zzz-mode-card {
+  grid-column: span 6;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 7rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--zzz-line);
+  border-radius: 1rem 1rem 0.25rem 1rem;
+  background: var(--zzz-card);
+  color: var(--zzz-fg);
+  text-align: left;
+  text-decoration: none;
+  transition: 0.18s ease;
 }
 
-.game-side-card-dark {
-    background: linear-gradient(180deg, rgba($dark, 0.95), rgba($dark, 0.9));
-    color: $text-normal-contrast;
+.zzz-mode-card:hover {
+  border-color: var(--zzz-yellow);
+  background: var(--zzz-yellow);
+  color: #090909;
+  transform: translateY(-2px);
 }
 
-.game-side-card-dark .game-kicker {
-    color: rgba($white, 0.65);
+.zzz-mode-number {
+  color: var(--zzz-yellow);
+  font-size: 2.4rem;
 }
 
-.game-side-text {
-    margin: 0.8rem 0 0;
-    color: inherit;
-    line-height: 1.8;
+.zzz-mode-card:hover .zzz-mode-number {
+  color: #090909;
 }
 
-.game-list {
-    margin: 0.75rem 0 0;
-    padding-left: 1.1rem;
-    color: inherit;
-    line-height: 1.9;
+.zzz-mode-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
-.game-side-pill {
-    margin-top: 0.8rem;
-    display: inline-flex;
-    padding: 0.65rem 0.9rem;
-    border-radius: 999px;
-    background: rgba($primary, 0.1);
-    color: $primary;
-    font-weight: 700;
+.zzz-mode-body strong {
+  font-size: 1.05rem;
 }
 
-@include media-breakpoint-down(lg) {
-    .game-board,
-    .game-side-card {
-        border-radius: 1.35rem;
-    }
+.zzz-mode-body small {
+  color: var(--zzz-dim);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+}
 
-    .game-item-meta,
-    .game-item-footer {
-        flex-direction: column;
-        align-items: flex-start;
-    }
+.zzz-mode-card:hover small,
+.zzz-mode-card:hover em {
+  color: rgba(9, 9, 9, 0.65);
+}
+
+.zzz-mode-body em {
+  color: var(--zzz-dim);
+  font-size: 0.76rem;
+  font-style: normal;
+}
+
+.zzz-mode-arrow {
+  margin-left: auto;
+  font-size: 1.4rem;
+}
+
+.zzz-summary-panel {
+  margin-top: 1rem;
+  padding: clamp(1rem, 3vw, 1.6rem);
+  border: 1px solid var(--zzz-line);
+  border-radius: 1rem 1rem 0.25rem 1rem;
+  background: color-mix(in srgb, var(--zzz-card) 94%, transparent);
+}
+
+.zzz-summary-panel p {
+  max-width: 48rem;
+  margin: 0;
+  color: var(--zzz-dim);
+  line-height: 1.8;
+}
+
+.zzz-stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  margin-top: 1.3rem;
+}
+
+.zzz-stat-row div {
+  padding: 0.9rem;
+  border-left: 3px solid var(--zzz-yellow);
+  background: rgba(127, 127, 127, 0.1);
+}
+
+.zzz-stat-row strong,
+.zzz-stat-row span {
+  display: block;
+}
+
+.zzz-stat-row strong {
+  font-size: 1.7rem;
+}
+
+.zzz-stat-row span {
+  margin-top: 0.2rem;
+  color: var(--zzz-dim);
+  font-size: 0.75rem;
+}
+
+@keyframes zzz-drift {
+  from {
+    transform: scale(1.02) translate(-1%, -1%);
+  }
+  to {
+    transform: scale(1.08) translate(1%, 1%);
+  }
+}
+
+@media (max-width: 768px) {
+  .zzz-mode-card,
+  .zzz-mode-card:last-child {
+    grid-column: span 12;
+  }
+
+  .zzz-stat-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1080px) {
+  .zzz-stat-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 </style>

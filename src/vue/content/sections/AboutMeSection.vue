@@ -10,9 +10,9 @@
                     <div class="about-card about-profile h-100">
                         <div class="about-avatar">菅</div>
                         <div class="about-name">菅名のBlog</div>
-                        <div class="about-role">前端工程师 / 站点主理人</div>
+                        <div class="about-role">前端工程师</div>
                         <p class="about-text">
-                            喜欢把页面做得有一点点“有内容的人气”，也喜欢让内容结构本身看起来就值得继续往里填。
+                            哦，猪包
                         </p>
                         <div class="about-tags">
                             <span class="badge rounded-pill text-bg-light about-tag">Vue 3</span>
@@ -40,7 +40,7 @@
                                 <div class="about-roadmap-head">
                                     <div>
                                         <div class="about-highlight-label">接下来会做</div>
-                                        <h3 class="about-roadmap-title">先前端，后内容，再考虑轻后端和文件服务</h3>
+                                        <h3 class="about-roadmap-title">随便搬点有意思的内容</h3>
                                     </div>
                                     <span class="badge rounded-pill text-bg-warning">长期规划</span>
                                 </div>
@@ -77,7 +77,7 @@ const roadmap = [
     {
         step: "01",
         title: "前端模块先成型",
-        text: "把文章、百合动漫、游戏攻略、开心一下和关于博主的结构固定下来。"
+        text: "把百合动漫、游戏攻略、开心一下和关于博主的结构固定下来。"
     },
     {
         step: "02",

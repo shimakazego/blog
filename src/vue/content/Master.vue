@@ -1,19 +1,16 @@
 <template>
-    <!-- Navigation -->
-    <Navigation logo="images/logo/agency-logo-small.png"
+    <Navigation logo="/images/logo/agency-logo-small.png"
                 label="*菅名のBlog*"/>
 
-    <!-- Content Display -->
     <router-view/>
 
-    <!-- Footer -->
     <Footer>
         <FooterBlock :darken="false"
                      :row="true">
             <FooterColumn title="关于本站"
                           faIcon="pi pi-lightbulb me-2"
                           :description="[
-                              `这里是菅名のBlog 的前端起点，后续会逐步补充文章、百合动漫、游戏攻略和 Web 玩具。`
+                              `这里是菅名のBlog 的前端起点，后续会逐步补充文章、百合动漫、游戏攻略和 Web 小玩具。`
                           ]"
                           :links="[
                               {label: `文章归档`, href: `#archive`, faIcon: null},
@@ -24,12 +21,11 @@
 
             <FooterColumn title="站点入口"
                           faIcon=""
-                          :description="[
-                          ]"
+                          :description="[]"
                           :links="[
-                              {label: `GitHub`, href: `https://github.com/shimakazego`, faIcon:`fa-brands fa-github`},
-                              {label: `Bilibili`, href: `https://www.bilibili.com`, faIcon:`fa-brands fa-bilibili`},
-                              {label: `Dnspod`, href: `https://console.dnspod.cn/dns/list`, faIcon:`pi pi-globe`},
+                              {label: `GitHub`, href: `https://github.com/shimakazego`, faIcon: `fa-brands fa-github`},
+                              {label: `Bilibili`, href: `https://www.bilibili.com`, faIcon: `fa-brands fa-bilibili`},
+                              {label: `Dnspod`, href: `https://console.dnspod.cn/dns/list`, faIcon: `pi pi-globe`},
                           ]"
                           :displayLinksAsButtons="true"/>
 

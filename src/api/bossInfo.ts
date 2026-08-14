@@ -1,0 +1,96 @@
+import { withAdminAuthHeaders } from '@/utils/adminAuth'
+
+export interface BossInfoRecord {
+  id: number
+  boss_name: string
+  defense: number
+  level: number
+  boss_image: string | null
+  weakness: string | null
+  resistance: string | null
+  crisis_base_hp?: number | null
+  stagger_multiplier?: number | null
+  field_buff_name?: string | null
+  field_buff_text?: string | null
+  field_buff_image?: string | null
+  field_buff_effect_blocks?: import('@/types/calculator').BuffEffectBlock[] | null
+}
+
+export interface BossInfoListResult {
+  items: BossInfoRecord[]
+  total: number
+  limit: number
+  offset: number
+  catalog?: 'all' | 'crisis' | 'defense'
+}
+
+export type BossInfoCatalog = 'all' | 'crisis' | 'defense'
+
+interface ApiResult<T> {
+  code: number
+  message: string
+  data: T
+  error?: string
+}
+
+const ZZZ_API_PREFIX = '/api/zzz'
+
+function extractApiErrorDetail(data: unknown): string {
+  if (!data || typeof data !== 'object') return ''
+  if ('error' in data && typeof (data as { error?: unknown }).error === 'string') {
+    return (data as { error: string }).error
+  }
+  return ''
+}
+
+async function parseResponse<T>(response: Response): Promise<T> {
+  const body = (await response.json()) as ApiResult<T>
+  const isSuccessCode = body.code >= 200 && body.code < 300
+  if (!response.ok || !isSuccessCode) {
+    const detail = extractApiErrorDetail(body.data)
+    throw new Error(detail ? `${body.message}：${detail}` : body.message || '请求失败')
+  }
+  return body.data
+}
+
+export async function lookupBossInfo(bossName: string) {
+  const query = new URLSearchParams({ boss_name: bossName.trim() })
+  const response = await fetch(`${ZZZ_API_PREFIX}/boss-info/lookup?${query}`)
+  return parseResponse<BossInfoRecord | null>(response)
+}
+
+export async function searchBossInfoNames(keyword: string, limit = 20) {
+  const query = new URLSearchParams()
+  if (keyword.trim()) query.set('q', keyword.trim())
+  query.set('limit', String(limit))
+  const response = await fetch(`${ZZZ_API_PREFIX}/boss-info/search?${query}`)
+  return parseResponse<string[]>(response)
+}
+
+export async function fetchBossInfoList(params: {
+  keyword?: string
+  limit?: number
+  offset?: number
+  catalog?: BossInfoCatalog
+} = {}) {
+  const query = new URLSearchParams()
+  if (params.keyword?.trim()) query.set('q', params.keyword.trim())
+  if (params.limit != null) query.set('limit', String(params.limit))
+  if (params.offset != null) query.set('offset', String(params.offset))
+  if (params.catalog && params.catalog !== 'all') query.set('catalog', params.catalog)
+  const suffix = query.toString()
+  const response = await fetch(`${ZZZ_API_PREFIX}/boss-info/list${suffix ? `?${suffix}` : ''}`)
+  return parseResponse<BossInfoListResult>(response)
+}
+
+export async function updateBossInfoRecord(
+  id: number,
+  payload: Partial<Omit<BossInfoRecord, 'id'>>,
+) {
+  const response = await fetch(`${ZZZ_API_PREFIX}/boss-info/${id}`, {
+    method: 'PUT',
+    headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  })
+  return parseResponse<BossInfoRecord>(response)
+}

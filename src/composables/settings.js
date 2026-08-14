@@ -6,7 +6,7 @@ export function useSettings() {
      * @return {boolean}
      */
     const getLoaderEnabled = () => {
-        return true
+        return false
     }
 
     /**

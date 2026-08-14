@@ -9,7 +9,7 @@
          }">
         <!-- Loader Content -->
         <div class="foxy-loader-content">
-            <ImageView src="images/logo/agency-logo-small.png"
+            <ImageView src="/images/logo/agency-logo-small.png"
                        alt="Logo"
                        class="image-view-logo"
                        :class="{
@@ -118,212 +118,164 @@ const _executeEnteringStep = () => {
 }
 
 const _executeAnimatingLogoStep = () => {
-    emit('rendered')
     currentStep.value = Steps.LOADING_LOGO
-    layout.setBodyScrollEnabled(false)
 
-    if(!didLoadLogo.value) {
+    const executeNextStep = () => {
+        currentStep.value = Steps.ANIMATING_LOGO
+        emit('rendered')
+
         scheduler.schedule(() => {
-            _executeAnimatingLogoStep()
-        }, 100, schedulerTag)
-        return
+            _executeAnimatingProgressStep()
+        }, 400, schedulerTag)
     }
 
-    currentStep.value = Steps.ANIMATING_LOGO
-    scheduler.schedule(() => {
-        _executeAnimatingProgressStep()
-    }, 300, schedulerTag)
+    if(didLoadLogo.value)
+        executeNextStep()
+    else {
+        const onWait = () => {
+            if(didLoadLogo.value)
+                executeNextStep()
+            else
+                scheduler.schedule(onWait, 100, schedulerTag)
+        }
+
+        scheduler.schedule(onWait, 100, schedulerTag)
+    }
 }
 
 const _executeAnimatingProgressStep = () => {
     currentStep.value = Steps.ANIMATING_PROGRESS
-    scheduler.schedule(() => {
-        _executeWaitingForCompletionStep()
-    }, 500, schedulerTag)
+
+    const transitionDuration = 350
+    const updateCount = 40
+    const increment = 100 / updateCount
+    const timePerUpdate = transitionDuration / updateCount
+
+    const updateProgress = () => {
+        percentage.value += increment
+
+        if(percentage.value >= 100) {
+            percentage.value = 100
+            _executeWaitingForCompletionStep()
+            return
+        }
+
+        scheduler.schedule(updateProgress, timePerUpdate, schedulerTag)
+    }
+
+    scheduler.schedule(updateProgress, timePerUpdate, schedulerTag)
 }
 
 const _executeWaitingForCompletionStep = () => {
     currentStep.value = Steps.WAITING_FOR_COMPLETION
 
-    const dt = 1000 / 30
-    loadingTime.value = 0
-    didEmitReady.value = false
-
-    scheduler.interval(() => {
-        _updateProgress(dt)
-    }, dt, schedulerTag)
-}
-
-const _updateProgress = (dt) => {
-    const isPageLoaded = Boolean(document.querySelector('.foxy-page-wrapper'))
-
-    loadingTime.value += isPageLoaded ?
-        dt :
-        dt / 16
-
-    const imageLoadPercentage = _getImageLoadPercentage()
-    const minTimePercentage = utils.clamp(loadingTime.value*80/500, 0, 100)
-
-    const currentPercentage = (imageLoadPercentage + minTimePercentage)/2
-    _incrementDisplayPercentage(currentPercentage)
-}
-
-const _getImageLoadPercentage = () => {
-    const imageElements = document.querySelectorAll(".image")
-    const imageLoadProgress = {loaded: 0, total: 0}
-    Array.from(imageElements).map(item => {
-        imageLoadProgress.total++
-        if(item.getAttribute('load-status') === "loaded")
-            imageLoadProgress.loaded++
-    })
-
-    if(imageLoadProgress.total <= 0)
-        return 0
-    return utils.clamp(imageLoadProgress.loaded*100/imageLoadProgress.total, 0, 100)
-}
-
-const _incrementDisplayPercentage = (currentPercentage) => {
-    const diff = currentPercentage - percentage.value
-    if(diff < 0)
-        return
-
-    const step = didEmitReady.value ?
-        8 :
-        Math.round(4 + Math.random() * 4)
-
-    const smootheningPercentageIncrement = diff > step ? step : Math.round(diff)
-    percentage.value += smootheningPercentageIncrement
-    percentage.value = utils.clamp(percentage.value, 0, 100)
-
-    if(percentage.value > 12 && !didEmitReady.value) {
-        emit('ready')
+    if(!didEmitReady.value) {
         didEmitReady.value = true
+        emit('ready')
     }
 
-    if(percentage.value === 100 || loadingTime.value >= 8000) {
-        _onLoadingComplete()
-    }
-}
+    const waitingDuration = Math.max(0, layout.firstMeaningfulPaint.value - Date.now())
+    loadingTime.value = waitingDuration
 
-const _onLoadingComplete = () => {
     scheduler.schedule(() => {
-        percentage.value = 100
         _executeLeavingStep()
-    }, 300, schedulerTag)
+    }, waitingDuration, schedulerTag)
 }
 
 const _executeLeavingStep = () => {
-    layout.setBodyScrollEnabled(true)
+    currentStep.value = Steps.LEAVING
     emit('leaving')
-
-    if(window.location.hash) {
-        scheduler.schedule(() => {
-            currentStep.value = Steps.LEAVING
-        }, 200, schedulerTag)
-    }
-    else {
-        currentStep.value = Steps.LEAVING
-    }
 
     scheduler.schedule(() => {
         emit('completed')
-    }, 900, schedulerTag)
+        currentStep.value = Steps.NONE
+        didLoadLogo.value = false
+        didEmitReady.value = false
+    }, 350, schedulerTag)
 }
 </script>
 
 <style lang="scss" scoped>
 @import "/src/scss/_theming.scss";
 
-div.foxy-loader {
+#foxy-loader {
     position: fixed;
-    z-index: 100;
-    user-select: none;
-
+    z-index: 9999;
+    inset: 0;
     display: flex;
-    justify-content: center;
     align-items: center;
-
-    background-color: $dark;
-    width: 100vw;
-    height: 125vh;
-    height: 125svh;
-    top: -12.5vh;
-    top: -12.5svh;
-    transition: opacity 0.3s ease-in;
-
-    &-tween-in {
-        opacity: 0;
-        transition: none!important;
-        user-select: none;
-        pointer-events: none;
-    }
-
-    &-tween-out {
-        top: -125vh;
-        transition: 1.2s top cubic-bezier(0.68, -0.55, 0.265, 1.55);
-    }
+    justify-content: center;
+    background: rgba($dark, 0.98);
 }
 
-div.foxy-loader-content {
-    color: $text-normal-contrast;
+.foxy-loader-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+}
+
+.image-view-logo {
+    width: 6rem;
+    height: 6rem;
+}
+
+.image-view-logo-animated {
+    animation: pulse 1.1s ease-in-out infinite;
+}
+
+.foxy-loader-progress-display {
+    min-width: 220px;
     text-align: center;
-    padding-bottom: 5rem;
+    transition: opacity 0.25s ease;
 }
 
-div.image-view-logo {
-    z-index: 10;
+.foxy-loader-progress-display-hidden {
     opacity: 0;
+}
 
-    width: 75px;
-    height: 75px;
-    @include media-breakpoint-down(lg) {
-        width: 68px;
-        height: 68px;
-    }
-    @include media-breakpoint-down(sm) {
-        width: 60px;
-        height: 60px;
-    }
+.percentage {
+    margin-bottom: 0.65rem;
+    color: $white;
+}
 
-    &-animated {
-        animation: popIn 0.3s ease-out forwards;
+.foxy-loader-progress-bar {
+    width: 100%;
+}
+
+.foxy-loader-tween-in {
+    animation: fadeIn 0.35s ease both;
+}
+
+.foxy-loader-tween-out {
+    animation: fadeOut 0.35s ease both;
+}
+
+@keyframes pulse {
+    0%,
+    100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.05);
     }
 }
 
-div.foxy-loader-progress-display {
-    margin-top: 5px;
-    overflow: hidden;
-    z-index: 5;
-    transition: 0.3s all ease-out;
-
-    &-hidden {
-        opacity: 0;
-        margin-top: -30px;
-    }
-
-    p {
-        color: $text-normal-contrast;
-        margin-bottom: 5px;
-        font-family: 'Lato', sans-serif;
-    }
-
-    .foxy-loader-progress-bar {
-        max-width: 105px;
-        margin: 0 auto;
-    }
-}
-
-div.transition-none {
-    transition: none!important;
-}
-
-@keyframes popIn {
+@keyframes fadeIn {
     from {
-        opacity:0;
-        transform: scale(0.2) translateY(-100%);
+        opacity: 0;
     }
     to {
-        opacity:1
+        opacity: 1;
+    }
+}
+
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
     }
 }
 </style>

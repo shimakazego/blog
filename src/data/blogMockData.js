@@ -117,7 +117,7 @@ export const funProjects = [
         name: "黑塔转圈圈",
         badge: "已确定搬运入口",
         description: "点一下转一圈，精神状态非常稳定（大概）。",
-        demo: "https://www.mxin.moe/scripts/heita/index.html",
+        demo: "/herta-kuru/index.html",
         repo: "https://github.com/duiqt/herta_kuru",
         accent: "#f6c453"
     },

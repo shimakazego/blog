@@ -8,6 +8,13 @@ const DOUBAN_PROXY_HOSTS = new Set([
     "img9.doubanio.com"
 ])
 
+const LOCAL_COVER_HOSTS = new Set([
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "192.168.1.133"
+])
+
 function buildRequestOrigin(req) {
     return `${req.protocol}://${req.get("host")}`
 }
@@ -28,12 +35,22 @@ function normalizeCoverUrl(req, url) {
     }
 
     if(url.startsWith("/")) {
-        return `${buildRequestOrigin(req)}${url}`
+        return url
+    }
+
+    try {
+        const parsed = new URL(url)
+
+        if(LOCAL_COVER_HOSTS.has(parsed.hostname)) {
+            return `${parsed.pathname}${parsed.search}`
+        }
+    }
+    catch {
+        return url
     }
 
     if(shouldProxyCover(url)) {
-        const baseOrigin = buildRequestOrigin(req)
-        return `${baseOrigin}/api/yuri-entries/cover-proxy?url=${encodeURIComponent(url)}`
+        return `/api/yuri-entries/cover-proxy?url=${encodeURIComponent(url)}`
     }
 
     return url
@@ -96,6 +113,7 @@ export const listYuriEntries = async (req, res) => {
 
     res.json(rows.map((row) => ({
         ...row,
+        coverUrl: normalizeCoverUrl(req, row.coverUrl),
         externalCoverUrl: normalizeCoverUrl(req, row.externalCoverUrl)
     })))
 }

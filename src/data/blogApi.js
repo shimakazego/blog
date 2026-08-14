@@ -11,12 +11,14 @@ function resolveApiOrigin() {
     }
 
     const {protocol, hostname} = window.location
-    const resolvedHost = LOCAL_HOSTS.has(hostname) ? "192.168.1.133" : hostname
+    if(LOCAL_HOSTS.has(hostname)) {
+        return `${protocol}//192.168.1.133:3001`
+    }
 
-    return `${protocol}//${resolvedHost}:3001`
+    return window.location.origin
 }
 
-const API_BASE_URL = `${resolveApiOrigin()}/api`
+const API_BASE_URL = `${resolveApiOrigin().replace(/\/$/, "")}/api`
 
 async function requestJson(path) {
     const response = await fetch(`${API_BASE_URL}${path}`)
@@ -52,3 +54,5 @@ export function listGameGuides(params = {}) {
 export function listYuriEntries(params = {}) {
     return requestJson(`/yuri-entries${toQueryString(params)}`)
 }
+
+export {resolveApiOrigin}

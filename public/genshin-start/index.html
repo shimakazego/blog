@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>原神主题网站 | Genshin Theme</title>
+
+    <!-- 样式文件 | CSS file -->
+    <link rel="stylesheet" href="indexstyle.css" type="text/css" />
+
+    
+</head>
+
+<body>
+    <!--日志弹窗-->
+    <div id="changelog-modal" class="changelog-modal">
+        <div class="changelog-content">
+            <h2 id="logtitle">(由JS控制)</h2>
+            <p id="groupdescribe">-----------------------------讨论群 856992001-----------------------------<br></p>
+            <p id="logtext">(由JS控制)</p>
+        </div>
+    </div>
+
+
+    <!--功能区-->
+    <div class="buttons-container">
+        <!--更新日志按钮-->
+        <div id="changelog-button" class="changelog-button">
+            <i class="changelog-icon"></i>
+        </div>
+    </div>
+
+
+    <!--网站主体-->
+    <div class="shell" id="shell">
+        <div class="header">
+            <h2 class="title">原神 · 印象</h2>
+            <h3 class="subtitle">Genshin | Character image</h3>
+        </div>
+        <div class="timeline">
+            <!-- 可莉 -->
+            <div class="item" data-text="2023.06.12 上线">
+                <div class="content"> 
+                    <a href="./webs/KleeWeb/klee.html" target="_blank"><img src="./img/01.jpg" alt="" class="img"></a>
+                    <h2 class="content-title">Klee</h2>
+                    <p class="content-desc">
+                        “那边那个小红帽是谁？” <br />
+                        “一个经常闯祸的火花骑士。”
+                    </p>
+                </div>
+            </div>
+
+            <!-- 纳西妲 -->
+            <div class="item" data-text="2023.06.20 上线">
+                <div class="content">
+                    <a href="./webs/NahidaWeb/nahida.html" target="_blank"><img src="./img/02.jpeg" alt="" class="img"></a>
+                    <h2 class="content-title">Nahida</h2>
+                    <p class="content-desc">
+                        “净善宫里藏着什么？” <br />
+                        “藏着美好与悲伤。”
+                    </p>
+                </div>
+            </div>
+
+            <!-- 绮良良 -->
+            <div class="item" data-text="2023.06.24 上线">
+                <div class="content">
+                    <a href="./webs/KiraraWeb/kirara.html" target="_blank"><img src="./img/03.jpg" alt="" class="img"></a>
+                    <h2 class="content-title">Kirara</h2>
+                    <p class="content-desc">
+                        “送快递是什么感觉？” <br />
+                        “在超时与未超时之间反复徘徊......”
+                    </p>
+                </div>
+            </div>
+
+            <!-- 多莉 -->
+            <div class="item" data-text="2023.06.27 上线">
+                <div class="content">
+                    <a href="./webs/DoriWeb/dori.html" target="_blank"><img src="./img/04.jpg" alt="" class="img"></a>
+                    <h2 class="content-title">Dori</h2>
+                    <p class="content-desc">
+                        “什么是双赢？” <br />
+                        “多莉会告诉你答案。”
+                    </p>
+                </div>
+            </div>
+
+            <!-- 芭芭拉 -->
+            <div class="item" data-text="2023.06.27 上线">
+                <div class="content">
+                    <a href="./webs/BabaraWeb/babara.html" target="_blank"><img src="./img/05.jpg" alt="" class="img"></a>
+                    <h2 class="content-title">Babara</h2>
+                    <p class="content-desc">
+                        “人们总是会对任何美好报以憧憬， <br />
+                        “天籁之声也不例外。”
+                    </p>
+                </div>
+            </div>
+
+            <!-- 敬请期待 -->
+            <div class="item" data-text="未来会是谁呢……？">
+                <div class="content">
+                    <a href="#"><img src="./img/last.jpg" alt="" class="img"></a>
+                    <h2 class="content-title">？</h2>
+                    <p class="content-desc">
+                        讨论群: 856992001<br />
+                        将你的创造展示于群星 。
+                    </p>
+                </div>
+            </div>
+
+
+        </div>
+    </div>
+
+
+    <!-- 引入 JS文件 -->
+    <script src="./jquery.min.js"></script>
+    <script src="./indexscript.js"></script>
+
+</body>
+
+</html>

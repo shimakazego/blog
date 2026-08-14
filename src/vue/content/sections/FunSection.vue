@@ -2,7 +2,7 @@
     <PageSection :id="props.id"
                  variant="default">
         <PageSectionHeader title="开心一下"
-                           subtitle="收集一些好玩、没什么负担的 web 项目（先把入口和展示感做好）。"/>
+                           subtitle="收集一些轻松、有趣、打开就能玩的 Web 小项目。"/>
 
         <PageSectionContent>
             <div class="fun-layout row g-4">
@@ -10,32 +10,32 @@
                     <article class="fun-feature h-100">
                         <div class="fun-feature-top">
                             <div class="fun-kicker">Featured Toy</div>
-                            <span class="badge rounded-pill text-bg-warning fun-status">优先收录</span>
+                            <span class="badge rounded-pill text-bg-warning fun-status">优先推荐</span>
                         </div>
 
                         <div class="fun-feature-title">黑塔转圈圈</div>
                         <p class="fun-feature-text">
-                            点一下转一圈，作为首页之外最适合“先放上去试试”的小玩具之一。
+                            点一下转一圈，轻松解压，作为“开心一下”里的第一个入口非常合适。
                         </p>
 
                         <div class="fun-feature-actions">
-                            <a href="https://www.mxin.moe/scripts/heita/index.html"
+                            <a href="/herta-kuru/index.html"
                                target="_blank"
                                rel="noopener noreferrer"
                                class="fun-action fun-action-primary">
-                                演示地址
+                                Demo
                             </a>
                             <a href="https://github.com/duiqt/herta_kuru"
                                target="_blank"
                                rel="noopener noreferrer"
                                class="fun-action">
-                                原作仓库
+                                Repo
                             </a>
                         </div>
 
-                        <div class="fun-feature-ribbon">
-                            后面还可以继续扩成「轻量 Web 玩具展柜」。
-                        </div>
+                        <!-- <div class="fun-feature-ribbon">
+                            后面还可以继续补更多轻量的互动玩具，先把这三个稳定入口搭起来。
+                        </div> -->
                     </article>
                 </div>
 
@@ -81,11 +81,29 @@
 import PageSection from "/src/vue/components/layout/PageSection.vue"
 import PageSectionHeader from "/src/vue/components/layout/PageSectionHeader.vue"
 import PageSectionContent from "/src/vue/components/layout/PageSectionContent.vue"
-import {funProjects} from "/src/data/blogMockData.js"
 
 const props = defineProps({
     id: String
 })
+
+const funProjects = [
+    {
+        name: "MiKuTap",
+        badge: "节奏互动",
+        description: "点击、拖拽、敲键盘都会产生节奏与图形反馈，很适合当作站内的互动玩具。",
+        demo: "/mikutap/index.html",
+        repo: "https://github.com/HFIProgramming/mikutap",
+        accent: "#56e6e0"
+    },
+    {
+        name: "原神启动",
+        badge: "主题网页",
+        description: "偏展示型的主题页面，风格和前两个不一样，适合放在这里丰富整体气质。",
+        demo: "/genshin-start/index.html",
+        repo: "https://github.com/suijiya/Klee",
+        accent: "#ffb36b"
+    }
+]
 </script>
 
 <style lang="scss" scoped>

@@ -17,6 +17,7 @@
                            rel="noopener noreferrer"
                            class="yuri-card-cover">
                             <img :src="work.cover"
+                                 @error="handleCoverError"
                                  :alt="work.name">
                             <div class="yuri-card-overlay">
                                 <span class="yuri-card-overlay-text">查看豆瓣详情</span>
@@ -126,7 +127,7 @@ import PageSection from "/src/vue/components/layout/PageSection.vue"
 import PageSectionHeader from "/src/vue/components/layout/PageSectionHeader.vue"
 import PageSectionContent from "/src/vue/components/layout/PageSectionContent.vue"
 import {yuriWorks as yuriFallbacks} from "/src/data/blogMockData.js"
-import {listYuriEntries} from "/src/data/blogApi.js"
+import {listYuriEntries, resolveApiOrigin} from "/src/data/blogApi.js"
 
 const props = defineProps({
     id: String
@@ -136,6 +137,7 @@ const PAGE_SIZE = 30
 const sectionRef = ref(null)
 const yuriWorksState = ref([])
 const currentPage = ref(1)
+const API_ORIGIN = resolveApiOrigin().replace(/\/$/, "")
 
 const fallbackCovers = [
     "https://images.unsplash.com/photo-1519682337058-a94d519337bc?auto=format&fit=crop&w=900&q=80",
@@ -287,6 +289,38 @@ function getStarClass(starValue, starIndex) {
     return "is-empty"
 }
 
+function normalizeCoverSource(url) {
+    if(!url) {
+        return ""
+    }
+
+    if(url.startsWith("/")) {
+        return `${API_ORIGIN}${url}`
+    }
+
+    try {
+        const parsed = new URL(url)
+        if(parsed.pathname.startsWith("/media/")) {
+            return `${API_ORIGIN}${parsed.pathname}${parsed.search}`
+        }
+    }
+    catch {
+        return url
+    }
+
+    return url
+}
+
+function handleCoverError(event) {
+    const image = event?.target
+    if(!image || image.dataset.fallbackApplied === "1") {
+        return
+    }
+
+    image.dataset.fallbackApplied = "1"
+    image.src = fallbackCovers[Math.floor(Math.random() * fallbackCovers.length)]
+}
+
 function buildMetaLine({releaseYear, countriesText, originCountry, entryTypeLabel}) {
     return [releaseYear, countriesText || originCountry, entryTypeLabel].filter(Boolean)
 }
@@ -363,7 +397,7 @@ function normalizeEntry(entry, index) {
         summary: entry.summary || entry.note || "这条作品还没有补上完整摘要，后面会继续整理。",
         resourceUrl: entry.resourceUrl || null,
         primaryUrl,
-        cover: entry.coverUrl || entry.externalCoverUrl || fallbackCovers[index % fallbackCovers.length],
+        cover: normalizeCoverSource(entry.coverUrl || entry.externalCoverUrl || fallbackCovers[index % fallbackCovers.length]),
         score,
         scoreLabel: entry.doubanUrl ? "豆瓣评分" : "站内推荐",
         scoreCount,
