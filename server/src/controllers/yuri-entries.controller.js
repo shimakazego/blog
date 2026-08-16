@@ -15,6 +15,13 @@ const LOCAL_COVER_HOSTS = new Set([
     "192.168.1.133"
 ])
 
+/**
+ * Expression that resolves the effective, displayable score for an entry:
+ * prefers the curated yuri_entries.score, falls back to the latest douban snapshot rating.
+ * Non-numeric / empty values collapse to NULL so they never match numeric filters.
+ */
+const SCORE_EXPR = "CAST(NULLIF(TRIM(COALESCE(NULLIF(TRIM(y.score), ''), NULLIF(TRIM(s.rating_value), ''))), '') AS DECIMAL(4,1))"
+
 function buildRequestOrigin(req) {
     return `${req.protocol}://${req.get("host")}`
 }
@@ -56,8 +63,50 @@ function normalizeCoverUrl(req, url) {
     return url
 }
 
+/**
+ * Escapes LIKE wildcards so user-provided search terms are matched literally.
+ */
+function escapeLike(value) {
+    return String(value).replace(/[\\%_]/g, (char) => `\\${char}`)
+}
+
 export const listYuriEntries = async (req, res) => {
+    const {search, year, minScore, maxScore} = req.query
     const status = req.query.status || "published"
+
+    const conditions = ["y.status = ?"]
+    const params = [status]
+
+    const keyword = String(search || "").trim()
+    if(keyword) {
+        const pattern = `%${escapeLike(keyword)}%`
+        conditions.push("(y.name LIKE ? ESCAPE '\\\\' OR y.title_zh LIKE ? ESCAPE '\\\\' OR y.title_original LIKE ? ESCAPE '\\\\')")
+        params.push(pattern, pattern, pattern)
+    }
+
+    if(year !== undefined && year !== null && String(year).trim() !== "") {
+        const yearNum = Number(year)
+        if(Number.isInteger(yearNum) && yearNum >= 1900 && yearNum <= 2200) {
+            conditions.push("y.release_year = ?")
+            params.push(yearNum)
+        }
+    }
+
+    if(minScore !== undefined && minScore !== null && String(minScore).trim() !== "") {
+        const min = Number(minScore)
+        if(Number.isFinite(min)) {
+            conditions.push(`${SCORE_EXPR} >= ?`)
+            params.push(min)
+        }
+    }
+
+    if(maxScore !== undefined && maxScore !== null && String(maxScore).trim() !== "") {
+        const max = Number(maxScore)
+        if(Number.isFinite(max)) {
+            conditions.push(`${SCORE_EXPR} <= ?`)
+            params.push(max)
+        }
+    }
 
     const [rows] = await db.query(
         `SELECT
@@ -103,12 +152,12 @@ export const listYuriEntries = async (req, res) => {
         ) s ON s.yuri_entry_id = y.id
         LEFT JOIN categories c ON c.id = y.category_id
         LEFT JOIN media_files m ON m.id = y.cover_media_id
-        WHERE y.status = ?
+        WHERE ${conditions.join(" AND ")}
         ORDER BY
             y.release_year DESC,
             COALESCE(y.published_at, y.created_at) DESC,
             y.id DESC`,
-        [status]
+        params
     )
 
     res.json(rows.map((row) => ({

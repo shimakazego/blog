@@ -2,14 +2,7 @@
   <Navigation logo="/images/logo/agency-logo-small.png" label="*菅名のBlog*" />
 
   <router-view />
-  <FooterBlock :darken="true" :row="false">
-    <FooterCopyright
-      holder="菅名のBlog"
-      url="https://github.com/shimakazego"
-      license="All Rights Reserved."
-    />
-  </FooterBlock>
-  <!-- <Footer>
+  <Footer>
     <FooterBlock :darken="false" :row="true">
       <FooterColumn
         title="关于本站"
@@ -47,6 +40,7 @@
         title="当前规划"
         faIcon="pi pi-envelope me-2 pe-1"
         :description="[]"
+        :links="[]"
         :displayLinksAsButtons="false"
       />
     </FooterBlock>
@@ -58,7 +52,7 @@
         license="All Rights Reserved."
       />
     </FooterBlock>
-  </Footer> -->
+  </Footer>
 </template>
 
 <script setup>
