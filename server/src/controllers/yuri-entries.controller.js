@@ -8,11 +8,17 @@ const DOUBAN_PROXY_HOSTS = new Set([
     "img9.doubanio.com"
 ])
 
+// 本地封面图主机：默认 loopback；额外主机（如 NAS 内网地址）由环境变量 LOCAL_COVER_HOST 提供（逗号分隔）
+const EXTRA_LOCAL_COVER_HOSTS = (process.env.LOCAL_COVER_HOST || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+
 const LOCAL_COVER_HOSTS = new Set([
     "localhost",
     "127.0.0.1",
     "::1",
-    "192.168.1.133"
+    ...EXTRA_LOCAL_COVER_HOSTS
 ])
 
 /**

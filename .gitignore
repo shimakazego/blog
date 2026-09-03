@@ -29,3 +29,9 @@ server/storage/uploads/*
 # OCR 工具运行产物
 artifacts/
 
+
+# 本地开发环境配置（含 NAS 地址等，不入库）
+.env.development
+.env.development.local
+*.tar
+

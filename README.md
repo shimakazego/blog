@@ -1,4 +1,4 @@
-# 菅名のBlog
+﻿# 菅名のBlog
 
 一个基于 **Vue 3 + Vite + Bootstrap 5** 的个人博客，部署在家庭 NAS 上。
 
@@ -27,7 +27,7 @@ npm run dev       # 开发模式，默认 http://localhost:5173
 npm run build     # 生产构建，输出到 dist/
 ```
 
-开发环境的 API 说明：前端统一通过 `/api/zzz/...` 前缀访问 NAS 上的反代（`http://192.168.1.133:15001`，nginx 容器），由反代分别转发到 ZZZ-HP 后端（3010）与博客后端（3001）；`VITE_API_ORIGIN` 指向博客 API 服务地址。
+开发环境的 API 说明：前端统一通过 `/api/zzz/...` 前缀访问 NAS 上的反代（`http://<NAS_IP>:15001`，nginx 容器），由反代分别转发到 ZZZ-HP 后端（3010）与博客后端（3001）；`VITE_API_ORIGIN` 指向博客 API 服务地址。
 
 ## 目录结构
 
@@ -71,7 +71,7 @@ powershell -File scripts/deploy-nas.ps1          # 构建 + 部署
 powershell -File scripts/deploy-nas.ps1 -SkipBuild   # 仅部署现有 dist
 ```
 
-脚本会：构建 → 打包上传 → 备份线上旧版 → 安装 → 同步后端图片资源 → 自动验证；认证优先使用 SSH 密钥（`ssh-copy-id ljx@192.168.1.133`），或设置环境变量 `SSH_PASSWORD`。
+脚本会：构建 → 打包上传 → 备份线上旧版 → 安装 → 同步后端图片资源 → 自动验证；认证优先使用 SSH 密钥（`ssh-copy-id ljx@<NAS_IP>`），或设置环境变量 `SSH_PASSWORD`。
 
 ## 致谢
 

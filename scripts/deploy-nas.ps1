@@ -1,13 +1,14 @@
 ﻿# 部署脚本：构建 blog 前端并发布到 NAS（nginx-test 容器静态目录）
 # 用法:
-#   powershell -File scripts/deploy-nas.ps1                 # 构建 + 部署
-#   powershell -File scripts/deploy-nas.ps1 -SkipBuild      # 仅部署现有 dist
+#   powershell -File scripts/deploy-nas.ps1 -NasHost <NAS_IP>       # 构建 + 部署
+#   powershell -File scripts/deploy-nas.ps1 -NasHost <NAS_IP> -SkipBuild   # 仅部署现有 dist
 # 认证:
-#   - 优先使用 SSH 密钥（推荐：ssh-copy-id ljx@192.168.1.133 配置一次）
-#   - 否则设置环境变量 SSH_PASSWORD
+#   - SSH 登录优先使用密钥（推荐：ssh-copy-id ljx@<NAS_IP> 配置一次）
+#   - sudo 密码通过环境变量提供：$env:SSH_PASSWORD = "你的密码"
 param(
     [switch]$SkipBuild,
-    [string]$NasHost = "192.168.1.133",
+    [Parameter(Mandatory = $true)]
+    [string]$NasHost,
     [string]$SshUser = "ljx",
     [string]$HtmlDir = "/volume1/docker/nginx-test/html",
     [string]$BackendDir = "/volume1/docker/zzz-hp-backend/app"
@@ -65,8 +66,8 @@ if ($LASTEXITCODE -ne 0) { throw "scp script failed" }
 
 # ── 远端安装（备份旧版 → 解包 → 同步后端图片目录） ──
 Write-Host "==> NAS 上安装" -ForegroundColor Cyan
-$sudoPassLine = "Lai2254803"  # TODO: 改成从环境变量读取，避免明文
-if ($env:SSH_PASSWORD) { $sudoPassLine = $env:SSH_PASSWORD }
+$sudoPassLine = $env:SSH_PASSWORD
+if (-not $sudoPassLine) { throw "请先设置环境变量 SSH_PASSWORD（NAS sudo 密码）" }
 $remoteCmd = "sudo -S -i bash /var/services/homes/$SshUser/deploy-nas-remote.sh " +
     "'$HtmlDir' '$BackendDir' '$stamp' /var/services/homes/$SshUser/blog-dist.tar.gz"
 $out = "$sudoPassLine`n" | ssh -o ConnectTimeout=15 $SshUser@$NasHost $remoteCmd 2>&1

@@ -1,5 +1,3 @@
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"])
-
 function resolveApiOrigin() {
     const configuredOrigin = import.meta.env.VITE_API_ORIGIN
     if(configuredOrigin) {
@@ -7,14 +5,10 @@ function resolveApiOrigin() {
     }
 
     if(typeof window === "undefined") {
-        return "http://192.168.1.133:3001"
+        return ""
     }
 
-    const {protocol, hostname} = window.location
-    if(LOCAL_HOSTS.has(hostname)) {
-        return `${protocol}//192.168.1.133:3001`
-    }
-
+    // 部署后与站点同源（经 NAS 反代），无需硬编码主机
     return window.location.origin
 }
 
