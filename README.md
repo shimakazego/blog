@@ -1,219 +1,80 @@
-<p align="center">
-    <img src="readme-assets/agency-logo.png" width="160">
-</p>
+# 菅名のBlog
 
-# [Foxy - Vue Agency Landing Page](https://ryanbalieiro.github.io/vue-agency-landing-page-template/)  by Ryan Balieiro
+一个基于 **Vue 3 + Vite + Bootstrap 5** 的个人博客，部署在家庭 NAS 上。
 
-**Foxy** is an agency landing page theme built with Vue3. It features a range of content sections, including a portfolio gallery, testimonials, services showcase, contact info, and more.
+博客目前包含首页、绝区零工具箱（ZZZ-HP 集成）、百合动漫、开心一下、关于博主等区块，并支持全局亮 / 暗主题切换。
 
-![alt tag1](readme-assets/foxy-promo.png)
+## 功能特性
 
-Key features:
-- Uses Vue3 **Composition API**.
-- Lightweight and fully responsive.
-- Uses Vite for packaging.
-- Emails with **EmailJS** – no backend needed!
-- Super easy to customize!
+- **首页区块导航**：Hero、绝区零工具箱、百合动漫、开心一下、关于博主，单页锚点切换
+- **绝区零工具箱（ZZZ-HP 集成）**：危局强袭、式舆防卫战、角色计算器、临界推演四个完整工具模块，数据与功能同步自开源项目 [ZZZ-HP](https://github.com/Nie7bai/ZZZ-HP)（群友共创维护，主站 [zzz-hp.top](https://zzz-hp.top/)），工具箱页已注明来源
+- **全局亮暗主题**：右下角悬浮按钮一键切换，所有区块（博客页面 + ZZZ 工具页）联动，主题偏好持久化
+- **NAS 一键部署**：`scripts/deploy-nas.ps1` 构建 → 上传 → 备份 → 安装 → 验证全自动
 
-## Live Preview
+## 技术栈
 
-Check out a live version of the template **[here](https://ryanbalieiro.github.io/vue-agency-landing-page-template/).**
+- [Vue 3](https://vuejs.org/)（Composition API）+ [Vue Router](https://router.vuejs.org/) + [Pinia](https://pinia.vuejs.org/)
+- [Vite](https://vitejs.dev/) 构建
+- [Bootstrap 5](https://getbootstrap.com/) + SCSS
+- [ECharts](https://echarts.apache.org/)（图表）、[Tesseract.js](https://tesseract.projectnaptha.com/)（截图 OCR）、Markdown-it 等
+- 后端：部署于 NAS 的 Express + MySQL（远程，仅通过反代访问）
 
-### 1. Base layout
-The theme brings together cozy shades of orange with clean, minimalistic dark and white tones for a fresh, modern feel. The fox-inspired theme adds a charming touch, creating a UI that's both inviting and visually engaging.
+## 快速开始
 
-![alt tag1](readme-assets/foxy-preview.png)
-
-### 2. Desktop Screenshots
-The layout features a centered view with a top sidebar, perfectly adapting to different screen sizes, from 4:3 monitors to ultra-wide displays.
-
-![alt tag1](readme-assets/foxy-desktop.png)
-
-### 3. Mobile Screenshots
-On mobile, the navbar condenses and becomes toggleable, maintaining the smooth flow of the landing page with sections in order.
-
-![alt tag1](readme-assets/foxy-mobile.png)
-
-## Getting Started 
-
-1. Clone the repo:
-```
-git clone https://github.com/ryanbalieiro/vue-agency-landing-page-template
-```
-
-2. Go to the project's root folder and use npm to install all required components:
-```
+```bash
 npm install
+npm run dev       # 开发模式，默认 http://localhost:5173
+npm run build     # 生产构建，输出到 dist/
 ```
 
-3. Launch the project in developer mode:
-```
-npm run dev
-```
+开发环境的 API 说明：前端统一通过 `/api/zzz/...` 前缀访问 NAS 上的反代（`http://192.168.1.133:15001`，nginx 容器），由反代分别转发到 ZZZ-HP 后端（3010）与博客后端（3001）；`VITE_API_ORIGIN` 指向博客 API 服务地址。
 
-4. If you want to temporarily deactivate the preload animation during theme adjustments, go to `src/composables/settings.js` and modify the following field:
-
-```js
-const getLoaderEnabled = () => {
-    return false
-}
-```
-
-## Quick Customization
-
-### 1. Quickly customizing the colors
-
-You can quickly customize the theme colors to fit your style. Simply access `src/scss/_variables.scss` and make adjustments to the color variables. For example, you can alter the primary color from orange to blue just by changing this line:
-
-```scss
-$primary: #07c5ee; /** making the primary color blue! **/
-$dark: #212529;
-```
-
-### 2. Changing the app content
-The template's content can be easily modified by editing the files in the `vue/content` folder. 
-
-Inside this folder, you will find:
-- `Master.vue` – Here you can edit the NavBar brand, as well as the footer information.
-- `pages/` – Here you can adjust the app pages and reorder sections as needed.
-- `sections/` – Here you can modify the content of the app sections.
-
-### 3. Pages
-The template comes with three preset pages: the home landing page, a privacy policy page, and a license page. Each page has its own file inside the `vue/content/pages` folder. To add a new page to the template:
-
-- Create a new `YourNewPage.vue` file inside the `vue/content/pages` folder.
-- Go to `main.js` and add a route to the new page.
-
-To remove a page, simply go to `main.js` and remove the route for that page. This will make the page inaccessible.
-
-### 4. Sections
-Each page of the app contains a set of sections. To add, reorder, or remove sections from a page, open the corresponding page file and import or remove the sections as needed.
-
-For example:
-```js
-import AboutSection from "/src/vue/content/sections/AboutSection.vue"
-import ServicesSection from "/src/vue/content/sections/ServicesSection.vue"
-
-const sections = [
-    new SectionInfo('about',    AboutSection,    'About',    'fa-solid fa-file'),
-    new SectionInfo('services', ServicesSection, 'Services', 'fa-solid fa-wrench'),
-    //(...)
-]
-```
-
-Each section has its own separate file inside the `vue/content/sections` folder. To create new sections for the app, follow the structure of the existing sections to maintain consistency and ensure the pattern is preserved.
-
-### 5. Section Content
-Each section of the app consists of a set of articles. Articles are generic components used to display blocks of information. The implementations for these articles can be found inside the `vue/components/articles` folder.
-
-An example of a section component:
-
-```vue
-<PageSection variant="default" 
-             :id="props.id">
-    <PageSectionHeader title="My Section Title"
-                       subtitle="This is my new section!"/>
-
-    <PageSectionContent>
-        <ArticleParagraph title="Article 1"
-                          fa-icon="fa-solid fa-circle"
-                          :description="[]"/>
-
-        <ArticleParagraph title="Article 2"
-                          fa-icon="fa-solid fa-circle"
-                          :description="[]"/>
-    </PageSectionContent>
-</PageSection>
-```
-
-Available section variants:
-- `default` - White background.
-- `primary` - Orange background.
-- `dark` - Gray background.
-- `promo` - Background with a laptop image.
-
-To modify the content of a section, simply open its corresponding file in the `vue/content/sections` folder. From there, you can add, edit, or remove articles as needed. 
-
-To learn how each Article implementation works, refer to the existing section files.
-
-### 6. Contact form configuration
-
-The `ContactForm.vue` component integrates `EmailJS`. EmailJS is a free service that allows you to send emails using JavaScript - without the need for a backend.
-
-To configure your contact form, follow these steps:
-- Create an EmailJS account (https://www.emailjs.com/)
-- In your EmailJS account panel, create an email service, which configures the provider that will send the emails (e.g., your Gmail or iCloud account).
-- Next, on your dashboard, create a new email template like this one:
+## 目录结构
 
 ```
-You got a new message from {{from_name}} ({{from_email}}):
-
-Subject: {{custom_subject}}
-
-{{message}}
+├── src/
+│   ├── assets/          # 全局样式与主题变量（zzz-theme.css 等）
+│   ├── scss/            # 博客 SCSS（含 _blog-theme.scss 亮暗主题变量）
+│   ├── api/             # ZZZ-HP API 封装（统一 /api/zzz 前缀）
+│   ├── components/      # ZZZ-HP 面板组件（history/defense/deduction/calculator）
+│   ├── layouts/         # ModeLayout（ZZZ 工具页通用布局）
+│   ├── views/           # ZZZ-HP 页面视图（危局/防卫/推演/计算器）
+│   ├── stores/          # Pinia（主题、计算器 Buff、各对比页状态）
+│   ├── vue/             # 博客页面与区块（content/pages、content/sections）
+│   └── main.js          # 路由与全局注册
+├── public/              # 静态资源（图片、字体、背景素材）
+├── scripts/
+│   ├── deploy-nas.ps1         # NAS 部署脚本
+│   └── deploy-nas-remote.sh   # 远端安装脚本（由部署脚本上传执行）
+└── vite.config.js
 ```
 
-- Now, open `src/composables/settings.js` in your project and enter your `EmailJS` info:
-```js
-const getCredentialsForEmailJS = () => {
-    return {
-        publicKey: "YOUR_EMAIL_JS_PUBLIC_KEY",
-        serviceId: "YOUR_EMAIL_JS_SERVICE_ID",
-        templateId: "YOUR_EMAIL_JS_TEMPLATE_ID"
-    }
-}
+## 亮暗主题
+
+- 切换按钮：`src/vue/components/widgets/ThemeToggle.vue`（全站悬浮，右下角）
+- 主题状态：`src/stores/theme.ts`（`<html data-theme>` + localStorage 持久化）
+- 博客区块变量：`src/scss/_blog-theme.scss`；ZZZ 工具页变量：`src/assets/zzz-theme.css`
+- 明暗两套均对五个首页区块与全部 ZZZ 工具页生效
+
+## 部署
+
+生产环境部署在 NAS（Synology，Docker）：
+
+- `nginx-test` 容器（端口 15001）：静态站点 + `/api/zzz` 反代
+- `zzz-hp-backend` 容器（端口 3010）：ZZZ-HP 后端（MySQL 3307）
+- 博客后端（Express，端口 3001）：文章/百合动漫等接口
+
+一键部署：
+
+```powershell
+powershell -File scripts/deploy-nas.ps1          # 构建 + 部署
+powershell -File scripts/deploy-nas.ps1 -SkipBuild   # 仅部署现有 dist
 ```
 
-- And voilà! Now you can submit your first email!
+脚本会：构建 → 打包上传 → 备份线上旧版 → 安装 → 同步后端图片资源 → 自动验证；认证优先使用 SSH 密钥（`ssh-copy-id ljx@192.168.1.133`），或设置环境变量 `SSH_PASSWORD`。
 
-## Deployment
+## 致谢
 
-### 1. Vite configuration
-Open `vite.config.js` and set the base directory for your application. This setting defines the main path that your website will be hosted under.
-
-```js
-export default defineConfig({
-  base: '/vue-agency-landing-page-template/',
-  plugins: [vue()],
-})
-```
-
-In simple terms, if you consider GitHub hosting the GitHub Pages site for this repo at the URL `https://ryanbalieiro.github.io/vue-agency-landing-page-template/`, the correct base directory to set is `/vue-agency-landing-page-template/`.
-
-If you're deploying to Netlify or your own custom domain where your website is located at the root, you can leave the `base` setting as `'/'`.
-
-### 2. Building for production
-To compile your project for production, execute:
-
-```
-npm run build
-``` 
-
-This command triggers a series of processes that package your code, assets, and other necessary files, ultimately creating a production-ready version of your project. After running the command, you'll find the compiled files within the `dist` folder.
-
-### 3. Building for Github Pages
-If you’re deploying to GitHub Pages, make sure to run this custom command instead:
-
-```
-npm run ghdeploy
-``` 
-
-This command builds your application and then creates a `404.html` file as a copy of `index.html`. This ensures that users accessing secondary routes are redirected to your app instead of seeing GitHub's default 404 page.
-
-## About
-
-This template was created by and is maintained by **[Ryan Balieiro](https://ryanbalieiro.com/)**.
-
-It is based on the [Bootstrap](https://getbootstrap.com/) framework created by Mark Otto and Jacob Thorton; and the [Vue](https://vuejs.org/) framework created by Evan You.
-
-Additional frameworks and plugins used include:
-- **Font Awesome**: A library of free vector icons.
-- **Swiper**: A powerful library for creating touch sliders.
-- **EmailJS**: A free service that allows you to send emails using JavaScript.
-
-
-## Copyright and License
-
-Code released under the [MIT](https://github.com/StartBootstrap/startbootstrap-agency/blob/master/LICENSE) license, providing complete freedom for utilization. Feel free to enhance and adapt it to suit your needs.
-
-Oh... and if you like this template, don't forget to **give it a ⭐** :)
+- **ZZZ-HP**：[GitHub](https://github.com/Nie7bai/ZZZ-HP) / [zzz-hp.top](https://zzz-hp.top/) —— 危局、防卫、计算器、临界推演等模块均来自该共创项目
+- **Foxy**：[vue-agency-landing-page-template](https://github.com/ryanbalieiro/vue-agency-landing-page-template) —— 本站基础页面框架源自该 Vue3 模板
+- [Bootstrap](https://getbootstrap.com/) & [Vue](https://vuejs.org/) 开源框架
