@@ -13,8 +13,6 @@ import { formatDateRange, formatHp, parseWeaknessElements, resolveAssetUrl, spli
 export type CrisisHpChartMode = 'normal' | 'hard'
 export type CrisisBossRoomType = 'normal' | 'hard' | 'all'
 
-const ZZZ_API_PREFIX = '/api/zzz'
-
 interface ApiBoss {
   id: number
   boss_name: string
@@ -30,7 +28,9 @@ interface ApiBoss {
   hp_coeff_percent?: number | null
   hp_coeff_manual?: boolean
   hp_coeff_label?: string | null
+  stagger_time?: number | null
   field_buff?: ApiFieldBuff | null
+  field_buff_set_id?: string | null
 }
 
 interface ApiFieldBuff {
@@ -38,6 +38,7 @@ interface ApiFieldBuff {
   text?: string
   image?: string | null
   effectBlocks?: import('@/types/calculator').BuffEffectBlock[] | null
+  set_id?: string | null
 }
 
 interface ApiBuff {
@@ -138,7 +139,7 @@ function mapBossToEnemy(boss: ApiBoss): EnemySlot {
 
   return {
     label: hard
-      ? `困难 Lv${boss.level}`
+      ? `绝境 Lv${boss.level}`
       : `房间 ${formatCrisisRoomLabel(boss.room)} Lv${boss.level}`,
     subStats: boss.boss_name,
     bossName: boss.boss_name,
@@ -151,6 +152,7 @@ function mapBossToEnemy(boss: ApiBoss): EnemySlot {
     defense: boss.defense,
     elements: parseWeaknessElements(boss.weakness),
     weakness: boss.weakness || undefined,
+    staggerTime: boss.stagger_time ?? null,
     resistance: boss.resistance || undefined,
     crisisBaseHp: boss.crisis_base_hp ?? null,
     hpCoeffPercent: boss.hp_coeff_percent ?? null,
@@ -158,6 +160,7 @@ function mapBossToEnemy(boss: ApiBoss): EnemySlot {
     isHardRoom: hard,
     recordId: boss.id,
     room: normalizeCrisisRoomCode(boss.room),
+    fieldBuffSetId: boss.field_buff_set_id ?? boss.field_buff?.set_id ?? null,
     fieldBuff: boss.field_buff
       ? {
           name: boss.field_buff.name,
@@ -191,7 +194,7 @@ function toPhaseData(phase: ApiPhase): PhaseData {
     enemies.push(
       hardBoss
         ? mapBossToEnemy(hardBoss)
-        : emptyEnemySlot('困难', true, CRISIS_HARD_ROOM_CODE),
+        : emptyEnemySlot('绝境', true, CRISIS_HARD_ROOM_CODE),
     )
   }
 
@@ -439,7 +442,7 @@ export async function fetchBossList(
   roomType: CrisisBossRoomType = 'normal',
 ): Promise<BossOption[]> {
   const response = await fetch(
-    `${ZZZ_API_PREFIX}/crisis-assault/bosses?roomType=${encodeURIComponent(roomType)}`,
+    `/api/zzz/crisis-assault/bosses?roomType=${encodeURIComponent(roomType)}`,
     { headers: adminAuthHeaders() },
   )
   if (!response.ok) {
@@ -459,7 +462,7 @@ export async function fetchBossChart(
   roomType: CrisisBossRoomType = 'normal',
 ): Promise<HpChartPoint[]> {
   const response = await fetch(
-    `${ZZZ_API_PREFIX}/crisis-assault/boss-chart?boss_name=${encodeURIComponent(bossName)}&roomType=${encodeURIComponent(roomType)}`,
+    `/api/zzz/crisis-assault/boss-chart?boss_name=${encodeURIComponent(bossName)}&roomType=${encodeURIComponent(roomType)}`,
     { headers: adminAuthHeaders() },
   )
   if (!response.ok) {
@@ -494,7 +497,7 @@ export async function fetchBossChart(
 }
 
 async function fetchCrisisAssaultApi(): Promise<ApiResponse> {
-  const response = await fetch(`${ZZZ_API_PREFIX}/crisis-assault/phases`, {
+  const response = await fetch('/api/zzz/crisis-assault/phases', {
     headers: adminAuthHeaders(),
   })
   if (!response.ok) {

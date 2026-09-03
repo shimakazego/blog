@@ -78,6 +78,7 @@ header.foxy-header {
     --logo-proportion: clamp(190px, 45vw, min(37.5vh, 35vw, 350px));
 
     position: relative;
+    z-index: 0; /* 建立 stacking context，让 z-index:-1 的背景图绘制在 header 内而不是 body 之下 */
     height: var(--height);
     overflow: hidden;
 

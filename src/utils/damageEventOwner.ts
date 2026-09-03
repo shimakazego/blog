@@ -61,6 +61,10 @@ export interface DamageOwnerEventShare {
   eventId: string
   displayName: string
   total: number
+  /** 单次期望（可选，用于明细展示） */
+  perHit?: number
+  /** 次数（可选） */
+  count?: number
   /** 占全部可计算事件总伤的比例 */
   ratio: number
   /** 占该产生者合计伤害的比例 */
@@ -82,16 +86,17 @@ export interface DamageOwnerShareSummary {
 }
 
 export interface DamageOwnerShareInput {
-  event: DamageEvent
+  ownerAgentId: string
   eventId: string
   displayName: string
   total: number
+  perHit?: number
+  count?: number
 }
 
-/** 按事件产生角色（owner）汇总可计算事件伤害占比 */
+/** 按归属者汇总可计算招式的伤害占比 */
 export function summarizeDamageByOwner(
   items: DamageOwnerShareInput[],
-  mainAgentId: string,
   resolveAgent: (id: string) => { id: string; name: string } | undefined,
 ): DamageOwnerShareSummary {
   const bucket = new Map<
@@ -104,9 +109,8 @@ export function summarizeDamageByOwner(
   >()
   let grandTotal = 0
   for (const item of items) {
-    const { event, eventId, displayName, total } = item
+    const { ownerAgentId: ownerId, eventId, displayName, total } = item
     if (!(total > 0)) continue
-    const ownerId = resolveEventOwnerAgentId(event, mainAgentId)
     const agent = resolveAgent(ownerId)
     const agentName = agent?.name?.trim() || ownerId
     const prev = bucket.get(ownerId) ?? { agentName, total: 0, events: [] }
@@ -115,6 +119,8 @@ export function summarizeDamageByOwner(
       eventId,
       displayName,
       total,
+      perHit: item.perHit,
+      count: item.count,
       ratio: 0,
       ownerRatio: 0,
     })
@@ -152,7 +158,10 @@ export function getDamageEventKindOptionsForMode(
   teamHasRemiel: boolean,
 ): DamageEventKindOption[] {
   if (modeType === 'direct') {
-    return [{ id: 'direct', label: '直伤' }]
+    return [
+      { id: 'direct', label: '直伤' },
+      { id: 'sharpen', label: '锐化' },
+    ]
   }
   return [
     { id: 'anomaly', label: '异常' },
@@ -235,4 +244,4 @@ export function mergeDamageEventAgentOptions(
 }
 
 export const RADIANCE_SELF_TRIGGER_HINT =
-  '本人耀变 = 蕾米埃尔异常基础 × 防御区 × 抗性区 × 耀变综合增伤 × 耀变倍率；异常基础 = 局内攻 × 局内精通区 × 特殊等级区 × 异化系数 × 等级区（局内攻/精不含队友增益）。'
+  '强度提供者为蕾米埃尔时启用本人耀变：异常基础 = 局内攻 × 局内精通区 × 特殊等级区 × 异化系数 × 等级区（局内攻 = 局外攻 + 自身攻击转模；局内精通 = 局外精通 + 四件套全局精通 + 音擎全局精通；攻/精不含队友增益；异化系数取最终局内面板）；最终 = 异常基础 × 防御区 × 抗性区 × 易伤区 × 失衡易伤区 × 耀变综合增伤 × 耀变倍率 × 特殊倍率乘区 × 特殊乘区。'

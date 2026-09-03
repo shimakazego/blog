@@ -12,6 +12,8 @@ import '@/assets/calculatorLight.css'
 
 import { AGENT_ELEMENTS, AGENT_MINDSCAPE_RANKS, AGENT_ROLES, collectMindscapeRankBuffs, createEmptyBuffStatModifiers, createEmptySelfTeamBuffs, getMindscapeNote, getMindscapeRankOnlyBuffs, numericStatFieldLabel, REFINEMENT_RANKS, SUPPORT_STAT_OPTIONS, WENGINE_ADVANCED_STAT_FIELDS, WENGINE_RARITIES } from '@/utils/calculatorUi'
 
+defineOptions({ name: 'CharacterCalculatorView' })
+
 type CalcPage = 'damage' | 'role-buff' | 'wengine-buff' | 'bangboo-buff' | 'drive-disc-buff'
 type MindscapeBuffMode = 'current' | 'cumulative'
 
@@ -265,8 +267,13 @@ const filteredDriveDiscDocs = computed(() =>
     />
 
     <aside class="sidebar" :class="{ 'sidebar--open': mobileNavOpen }">
-      <RouterLink to="/#game-guides" class="back" @click="mobileNavOpen = false">← 返回首页</RouterLink>
-      <h1 class="sidebar-title">角色计算器</h1>
+      <RouterLink to="/" class="back" @click="mobileNavOpen = false">
+        <span class="back-arrow" aria-hidden="true">◄</span>返回首页
+      </RouterLink>
+      <h1 class="sidebar-title zzz-display">
+        <span class="sidebar-title-text">角色计算器</span>
+        <span class="sidebar-title-bar" aria-hidden="true" />
+      </h1>
       <nav class="sidebar-nav">
         <div v-for="p in (['damage', 'role-buff', 'wengine-buff', 'bangboo-buff', 'drive-disc-buff'] as CalcPage[])" :key="p" class="sidebar-nav-group">
           <button
@@ -275,7 +282,8 @@ const filteredDriveDiscDocs = computed(() =>
             type="button"
             @click="selectPage(p)"
           >
-            {{ pageTitleMap[p] }}
+            <span class="nav-btn-tick" aria-hidden="true" />
+            <span class="nav-btn-label">{{ pageTitleMap[p] }}</span>
           </button>
           <div
             v-if="p === 'damage'"
@@ -284,48 +292,52 @@ const filteredDriveDiscDocs = computed(() =>
           >
             <div class="damage-subnav-inner">
               <nav class="damage-subnav" :aria-hidden="activePage !== 'damage'">
-                <button
-                  v-for="item in damageSubNav"
-                  :key="item.id"
-                  type="button"
-                  class="damage-subnav-btn"
-                  :tabindex="activePage === 'damage' ? 0 : -1"
-                  @click="scrollToDamageSection(item)"
-                >
-                  {{ item.label }}
-                </button>
-
-                <div class="damage-calc-mode-group">
-                  <button
-                    type="button"
-                    class="damage-subnav-btn damage-calc-mode-label"
-                    :tabindex="activePage === 'damage' ? 0 : -1"
-                    @click="scrollToDamageSection({ id: 'damage-calc-mode' })"
-                  >
-                    计算方式
-                  </button>
-                  <div class="damage-calc-mode-children">
+                <template v-for="item in damageSubNav" :key="item.id">
+                  <div v-if="item.id === 'damage-calc-mode'" class="damage-calc-mode-group">
                     <button
-                      v-for="item in damageCalcModeItems"
-                      :key="item.id"
                       type="button"
-                      class="damage-subnav-btn"
-                      :class="{ active: damageCalcModeHint === item.calcMode }"
+                      class="damage-subnav-btn damage-calc-mode-label"
                       :tabindex="activePage === 'damage' ? 0 : -1"
-                      @click="scrollToDamageSection(item)"
+                      @click="scrollToDamageSection({ id: 'damage-calc-mode' })"
                     >
-                      {{ item.label }}
+                      计算方式
                     </button>
+                    <div class="damage-calc-mode-children">
+                      <button
+                        v-for="modeItem in damageCalcModeItems"
+                        :key="modeItem.id"
+                        type="button"
+                        class="damage-subnav-btn"
+                        :class="{ active: damageCalcModeHint === modeItem.calcMode }"
+                        :tabindex="activePage === 'damage' ? 0 : -1"
+                        @click="scrollToDamageSection(modeItem)"
+                      >
+                        {{ modeItem.label }}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                  <button
+                    v-else
+                    type="button"
+                    class="damage-subnav-btn"
+                    :tabindex="activePage === 'damage' ? 0 : -1"
+                    @click="scrollToDamageSection(item)"
+                  >
+                    {{ item.label }}
+                  </button>
+                </template>
               </nav>
             </div>
           </div>
         </div>
       </nav>
+      <div class="sidebar-foot" aria-hidden="true">ZZZ-HP</div>
     </aside>
 
-    <section class="content">
+    <section
+      class="content"
+      :class="{ 'content--flush-top': activePage === 'damage' && loaded && !error }"
+    >
       <p v-if="loading || !loaded" class="load-hint">正在从数据库加载计算器数据...</p>
       <p v-else-if="error" class="load-error">{{ error }}</p>
       <template v-else>
@@ -668,44 +680,95 @@ const filteredDriveDiscDocs = computed(() =>
 }
 
 .calculator-page.theme-light {
-  background: #eef1f5;
-  color: #1c212a;
+  /* 对齐危局/防卫内容区纸色底 */
+  background: var(--zzz-bg, #ece9e0);
+  color: var(--color-text, #1c212a);
 }
 
+/* 对齐危局 ModeSidebar：深色棋盘侧栏，明暗主题不变 */
 .sidebar {
-  border-right: 1px solid #25282e;
-  background: #121419;
-  padding: 1rem;
+  width: 220px;
+  height: 100vh;
+  padding: 1.4rem 0.9rem;
+  border-right: 2px solid #000;
+  background: var(--zzz-ink, #000);
+  background-image: var(--zzz-tex-chessboard-dark);
+  background-position:
+    0 0,
+    3px 3px;
+  background-size: 6px 6px;
+  color: #f5f5f0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
   overflow-y: auto;
-  transition:
-    background-color 0.2s,
-    border-color 0.2s;
 }
 
 .calculator-page.theme-light .sidebar {
-  background: #f7f8fa;
-  border-right-color: #d8dde5;
+  background: var(--zzz-ink, #000);
+  background-image: var(--zzz-tex-chessboard-dark);
+  background-position:
+    0 0,
+    3px 3px;
+  background-size: 6px 6px;
+  border-right-color: #000;
+  color: #f5f5f0;
 }
 
 .back {
-  font-size: 0.84rem;
-  color: #b7bec8;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--zzz-font-mono, ui-monospace, monospace);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: rgba(245, 245, 240, 0.55);
   text-decoration: none;
+  transition: color 0.18s ease-out;
+}
+
+.back-arrow {
+  font-size: 0.62rem;
+  color: var(--zzz-yellow, #fbfe00);
+}
+
+.back:hover {
+  color: #f5f5f0;
 }
 
 .calculator-page.theme-light .back {
-  color: #4a5568;
+  color: rgba(245, 245, 240, 0.55);
 }
 
 .sidebar-title {
-  margin: 0.9rem 0 0.7rem;
-  font-size: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--zzz-line, #3a3a3a);
+}
+
+.sidebar-title-text {
+  font-size: 1.2rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  color: #f5f5f0;
+}
+
+.sidebar-title-bar {
+  width: 2.4rem;
+  height: 4px;
+  background: var(--zzz-yellow, #fbfe00);
+  transform: skew(-24deg);
 }
 
 .sidebar-nav {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
+  flex: 1;
 }
 
 .sidebar-nav-group {
@@ -715,24 +778,95 @@ const filteredDriveDiscDocs = computed(() =>
 }
 
 .sidebar-btn {
-  border: 1px solid #2a2d33;
-  border-radius: 8px;
-  background: #171a1f;
-  color: #dce1ea;
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.72rem 0.9rem;
+  border: 1px solid #000;
+  border-radius: var(--zzz-radius-btn, 4px);
+  background: var(--zzz-ink-2, #1c1c1c);
+  color: rgba(245, 245, 240, 0.85);
+  font-size: 0.9rem;
+  font-weight: 600;
   text-align: left;
-  padding: 0.45rem 0.6rem;
   cursor: pointer;
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.14),
+    inset 0 0 0 2px #2e2e2e,
+    inset 0 0 0 3px var(--zzz-ink-2, #1c1c1c);
+  transition:
+    background-color 0.16s ease-out,
+    color 0.16s ease-out,
+    box-shadow 0.16s ease-out;
+}
+
+.nav-btn-tick {
+  flex-shrink: 0;
+  width: 0.5rem;
+  height: 0.5rem;
+  background: transparent;
+  transform: skew(-24deg);
+  border: 1px solid rgba(245, 245, 240, 0.35);
+  transition:
+    background-color 0.16s ease-out,
+    border-color 0.16s ease-out;
+}
+
+.nav-btn-label {
+  min-width: 0;
+}
+
+.sidebar-btn:hover {
+  color: #f5f5f0;
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.14),
+    inset 0 0 0 2px var(--zzz-yellow, #fbfe00),
+    inset 0 0 0 3px var(--zzz-ink-2, #1c1c1c);
+}
+
+.sidebar-btn:hover .nav-btn-tick {
+  border-color: var(--zzz-yellow, #fbfe00);
 }
 
 .sidebar-btn.active {
-  border-color: #c9a55c;
-  background: #1f1a14;
+  color: #0a0a0a;
+  font-weight: 800;
+  animation: zzz-flash-bg 1s ease-in-out infinite alternate;
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 2px rgba(0, 0, 0, 0.6);
+}
+
+.sidebar-btn.active .nav-btn-tick {
+  background: #0a0a0a;
+  border-color: #0a0a0a;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  font-family: var(--zzz-font-display, inherit);
+  font-size: 0.9rem;
+  letter-spacing: 0.14em;
+  color: transparent;
+  -webkit-text-stroke: 1px var(--zzz-line, #3a3a3a);
+  user-select: none;
+}
+
+.sidebar-foot::before {
+  content: '';
+  display: block;
+  height: 10px;
+  margin-bottom: 0.7rem;
+  border-radius: 2px;
+  background: #050505 url('/zzz-assets/tab-bg-point.webp') repeat;
 }
 
 .damage-subnav-wrap {
   display: grid;
   grid-template-rows: 0fr;
-  margin: 0 0 0 0.45rem;
+  margin: 0 0 0 0.35rem;
   transition: grid-template-rows 0.28s ease;
 }
 
@@ -750,7 +884,7 @@ const filteredDriveDiscDocs = computed(() =>
   flex-direction: column;
   gap: 0.25rem;
   padding-left: 0.55rem;
-  border-left: 1px solid #2a2d33;
+  border-left: 1px solid rgba(245, 245, 240, 0.18);
   opacity: 0;
   transform: translateY(-6px);
   transition:
@@ -767,9 +901,9 @@ const filteredDriveDiscDocs = computed(() =>
 
 .damage-subnav-btn {
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   background: transparent;
-  color: #9ea6b3;
+  color: rgba(245, 245, 240, 0.55);
   text-align: left;
   padding: 0.28rem 0.45rem;
   font-size: 0.76rem;
@@ -777,13 +911,13 @@ const filteredDriveDiscDocs = computed(() =>
 }
 
 .damage-subnav-btn:hover {
-  color: #dce1ea;
-  background: #171a1f;
+  color: #f5f5f0;
+  background: rgba(251, 254, 0, 0.08);
 }
 
 .damage-subnav-btn.active {
-  color: #e8edf5;
-  background: #1f2430;
+  color: var(--zzz-yellow, #fbfe00);
+  background: rgba(251, 254, 0, 0.12);
 }
 
 .damage-calc-mode-group {
@@ -794,7 +928,7 @@ const filteredDriveDiscDocs = computed(() =>
 }
 
 .damage-calc-mode-label {
-  color: #b4bcc8;
+  color: rgba(245, 245, 240, 0.7);
   font-weight: 600;
 }
 
@@ -804,13 +938,23 @@ const filteredDriveDiscDocs = computed(() =>
   gap: 0.18rem;
   margin-left: 0.35rem;
   padding-left: 0.5rem;
-  border-left: 2px solid #3a414d;
+  border-left: 1px solid rgba(245, 245, 240, 0.14);
 }
 
 .content {
   min-height: 0;
   padding: 1rem;
   overflow-y: auto;
+}
+
+.content--flush-top {
+  padding-top: 0;
+}
+
+.calculator-page.theme-light .content {
+  background: transparent;
+  background-image: var(--zzz-tex-dots);
+  background-size: 14px 14px;
 }
 
 .load-hint,
@@ -1071,49 +1215,6 @@ const filteredDriveDiscDocs = computed(() =>
 
 .doc-detail li {
   margin: 0.2rem 0;
-}
-
-/* 白天模式：页面壳 + 常用卡片 */
-.calculator-page.theme-light .sidebar-btn {
-  border-color: #d0d5dd;
-  background: #fff;
-  color: #2d3440;
-}
-
-.calculator-page.theme-light .sidebar-btn:hover {
-  background: #f0f2f6;
-}
-
-.calculator-page.theme-light .sidebar-btn.active {
-  border-color: #c9a55c;
-  background: #fff8eb;
-  color: #5c4818;
-}
-
-.calculator-page.theme-light .damage-subnav {
-  border-left-color: #d0d5dd;
-}
-
-.calculator-page.theme-light .damage-subnav-btn {
-  color: #5a6575;
-}
-
-.calculator-page.theme-light .damage-subnav-btn:hover {
-  color: #1c212a;
-  background: #e8ebf0;
-}
-
-.calculator-page.theme-light .damage-subnav-btn.active {
-  color: #1c212a;
-  background: #dde3ec;
-}
-
-.calculator-page.theme-light .damage-calc-mode-label {
-  color: #3a4454;
-}
-
-.calculator-page.theme-light .damage-calc-mode-children {
-  border-left-color: #c5ccd8;
 }
 
 .calculator-page.theme-light .card {

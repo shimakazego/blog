@@ -1,0 +1,265 @@
+/* ============================================================
+   ZZZ-HP · 绝区零风格设计 tokens V2
+   参照：游戏内 UI（zenless-ui 组件库逆向）+ 官方美术理念
+   内核：复古模拟物 / 美式漫画 / 街头波普 / 高纯色小体积点缀
+   只新增变量与工具类，不改动任何既有选择器。
+   ============================================================ */
+
+@font-face {
+  font-family: 'Archivo Black';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/archivo-black-latin.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
+}
+
+:root {
+  /* ── 主色：绳网荧光黄 + 电流绿（激活态闪烁对） ── */
+  --zzz-yellow: #fbfe00;
+  --zzz-green: #91bc00;
+  --zzz-ink: #000000;
+  --zzz-ink-1: #111111;
+  --zzz-ink-2: #1c1c1c;
+  --zzz-ink-3: #2a2a2a;
+  --zzz-paper: #e8e6df;
+  --zzz-paper-soft: #f1efe9;
+
+  /* ── 元素属性色（游戏内五属性） ── */
+  --zzz-ether: #fe427e;
+  --zzz-fire: #ff5522;
+  --zzz-electric: #2eb6ff;
+  --zzz-ice: #98eff0;
+  --zzz-physical: #f0d12a;
+
+  /* ── 字体 ── */
+  --zzz-font-display:
+    'Archivo Black', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Noto Sans CJK SC', sans-serif;
+  --zzz-font-mono:
+    'JetBrains Mono', 'PingFang SC', 'Microsoft YaHei', monospace;
+
+  /* ── 纹理（zenless-ui 逆向配方） ── */
+  /* 棋盘格 6px：ZZZ 面板标志性肌理 */
+  --zzz-tex-chessboard-dark:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.06) 25%, transparent 0 75%, rgba(255, 255, 255, 0.06) 0),
+    linear-gradient(45deg, rgba(255, 255, 255, 0.06) 25%, transparent 0 75%, rgba(255, 255, 255, 0.06) 0);
+  /* 40° 斜纹 */
+  --zzz-tex-stripes-dark:
+    repeating-linear-gradient(40deg, transparent 0 5px, rgba(255, 255, 255, 0.07) 5px 10px);
+  /* 本戴点（Ben-Day dots） */
+  --zzz-tex-dots-dark:
+    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.09) 1px, transparent 0);
+
+  --zzz-tex-chessboard-light:
+    linear-gradient(45deg, rgba(0, 0, 0, 0.05) 25%, transparent 0 75%, rgba(0, 0, 0, 0.05) 0),
+    linear-gradient(45deg, rgba(0, 0, 0, 0.05) 25%, transparent 0 75%, rgba(0, 0, 0, 0.05) 0);
+  --zzz-tex-stripes-light:
+    repeating-linear-gradient(40deg, transparent 0 5px, rgba(0, 0, 0, 0.06) 5px 10px);
+  --zzz-tex-dots-light:
+    radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.08) 1px, transparent 0);
+
+  /* ── 主题驱动 ── */
+  --zzz-bg: var(--zzz-ink);
+  --zzz-fg: #f5f5f0;
+  --zzz-fg-dim: rgba(245, 245, 240, 0.55);
+  --zzz-line: rgba(255, 255, 255, 0.16);
+  --zzz-line-strong: rgba(255, 255, 255, 0.38);
+  --zzz-tex-chessboard: var(--zzz-tex-chessboard-dark);
+  --zzz-tex-stripes: var(--zzz-tex-stripes-dark);
+  --zzz-tex-dots: var(--zzz-tex-dots-dark);
+  --zzz-card: var(--zzz-ink-2);
+  --zzz-card-border: #000000;
+
+  /* 不对称圆角：单侧紧角是 ZZZ 卡片标志 */
+  --zzz-radius-card: 18px 18px 4px 18px;
+  --zzz-radius-panel: 20px 20px 0 20px;
+  --zzz-radius-btn: 6px;
+}
+
+[data-theme='light'] {
+  /* ── 亮色统一：暖纸色调家族（覆盖 base.css 的冷灰白） ── */
+  --color-background: #f2f0e9;
+  --color-background-soft: #faf8f2;
+  --color-background-mute: #e8e5da;
+  --color-border: rgba(60, 55, 40, 0.16);
+  --color-border-hover: rgba(60, 55, 40, 0.34);
+  --color-heading: #1c1a14;
+  --color-text: rgba(28, 26, 20, 0.72);
+
+  --zzz-bg: #ece9e0;
+  --zzz-fg: #141412;
+  --zzz-fg-dim: rgba(20, 20, 18, 0.55);
+  --zzz-line: rgba(0, 0, 0, 0.2);
+  --zzz-line-strong: rgba(0, 0, 0, 0.5);
+  --zzz-tex-chessboard: var(--zzz-tex-chessboard-light);
+  --zzz-tex-stripes: var(--zzz-tex-stripes-light);
+  --zzz-tex-dots: var(--zzz-tex-dots-light);
+  --zzz-card: #faf8f2;
+  --zzz-card-border: #141412;
+}
+
+/* ── 棋盘格肌理（配合 background-size: 6px 6px; position 0 0, 3px 3px） ── */
+.zzz-tex-chess {
+  background-image: var(--zzz-tex-chessboard);
+  background-position:
+    0 0,
+    3px 3px;
+  background-size: 6px 6px;
+  background-repeat: repeat;
+}
+
+.zzz-tex-stripes {
+  background-image: var(--zzz-tex-stripes);
+}
+
+.zzz-tex-dots {
+  background-image: var(--zzz-tex-dots);
+  background-size: 14px 14px;
+}
+
+/* ── 双层 bezel：色环 + 黑缝 + 顶部反光（ZZZ 按钮招牌层次） ── */
+.zzz-bezel {
+  position: relative;
+  border: 1px solid #000;
+  border-radius: var(--zzz-radius-btn);
+}
+
+.zzz-bezel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.2),
+    inset 0 0 0 3px var(--bezel-color, #333),
+    inset 0 0 0 4px #000;
+}
+
+/* ── 激活态黄绿电流闪烁（ZZZ 选中态标志动效） ── */
+@keyframes zzz-flash-bg {
+  from {
+    background-color: var(--zzz-yellow);
+  }
+  to {
+    background-color: var(--zzz-green);
+  }
+}
+
+@keyframes zzz-flash-color {
+  from {
+    color: var(--zzz-yellow);
+  }
+  to {
+    color: var(--zzz-green);
+  }
+}
+
+.zzz-flash-bg {
+  animation: zzz-flash-bg 1s ease-in-out infinite alternate;
+}
+
+/* ── 斜切角卡片 ── */
+.zzz-cut {
+  clip-path: polygon(
+    0 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    100% 100%,
+    14px 100%,
+    0 calc(100% - 14px)
+  );
+}
+
+.zzz-cut-sm {
+  clip-path: polygon(
+    0 0,
+    calc(100% - 8px) 0,
+    100% 8px,
+    100% 100%,
+    8px 100%,
+    0 calc(100% - 8px)
+  );
+}
+
+/* ── 荧光黄标签块：黄底黑字斜切 ── */
+.zzz-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.2em 0.9em 0.2em 0.7em;
+  background: var(--zzz-yellow);
+  color: #0a0a0a;
+  font-family: var(--zzz-font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+}
+
+/* ── 展示标题：极粗 + 微斜 ── */
+.zzz-display {
+  font-family: var(--zzz-font-display);
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  transform: skew(-4deg);
+}
+
+/* ── 荧光黄下划粗杠 ── */
+.zzz-underbar {
+  position: relative;
+  padding-bottom: 0.35em;
+}
+
+.zzz-underbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 2.2em;
+  height: 0.14em;
+  background: var(--zzz-yellow);
+  transform: skew(-24deg);
+}
+
+/* ── ZZZ 自定义光标（游戏素材，InterKnot-Web 热点配方） ── */
+.zzz-cursor-zone {
+  cursor: url('/zzz-assets/cursors/default.png') 2 1, auto;
+}
+
+.zzz-cursor-zone a,
+.zzz-cursor-zone button,
+.zzz-cursor-zone [role='button'],
+.zzz-cursor-zone select,
+.zzz-cursor-zone summary {
+  cursor: url('/zzz-assets/cursors/pointer.png') 14 3, pointer;
+}
+
+.zzz-cursor-zone input,
+.zzz-cursor-zone textarea,
+.zzz-cursor-zone [contenteditable='true'] {
+  cursor: url('/zzz-assets/cursors/text.png') 16 16, text;
+}
+
+.zzz-cursor-zone :disabled,
+.zzz-cursor-zone [aria-disabled='true'] {
+  cursor: url('/zzz-assets/cursors/not-allowed.png') 16 14, not-allowed;
+}
+
+/* ── 动效纪律：尊重减弱动态偏好 ── */
+@media (prefers-reduced-motion: reduce) {
+  .zzz-anim,
+  .zzz-anim * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

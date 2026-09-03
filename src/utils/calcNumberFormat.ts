@@ -9,20 +9,21 @@ export function roundCalc(value: number, precision = CALC_NUMBER_PRECISION): num
 
 /**
  * 明确展示到指定小数位（默认 4 位）。
- * 大整数仍按整数展示；绝对值 ≥ 1000 的非整数保留至多 2 位以免过长。
+ * 整数且绝对值 < 1000 时不补小数位。
  */
 export function formatCalcDecimal(value: number, precision = CALC_NUMBER_PRECISION): string {
   if (!Number.isFinite(value)) return String(value)
   if (Number.isInteger(value) && Math.abs(value) < 1000) {
     return value.toLocaleString('en-US')
   }
-  if (Math.abs(value) >= 1000) {
-    return roundCalc(value, Math.min(precision, 2)).toLocaleString('en-US', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: Math.min(precision, 2),
-    })
+  const rounded = roundCalc(value, precision)
+  if (Number.isInteger(rounded) && Math.abs(rounded) < 1000) {
+    return rounded.toLocaleString('en-US')
   }
-  return roundCalc(value, precision).toFixed(precision)
+  return rounded.toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: precision,
+  })
 }
 
 /** 带符号的小数展示，转模/增益数值用 */

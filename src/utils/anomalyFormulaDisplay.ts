@@ -2,12 +2,30 @@ import type { AnomalyDamageSubKind } from '@/types/calculator'
 import type { DamageCalcResult } from '@/utils/damageCalc'
 
 export interface AnomalyFormulaAgentLabels {
-  /** 异常基础乘区所属角色（产生角色或 owner） */
+  /**
+   * 异常基础乘区所属角色展示名（建议带身份前缀，如「异常强度提供者 · 爱丽丝」）
+   */
   baseAgent?: string
-  /** 增伤/倍率/暴击等 bonus 乘区所属角色（紊乱/乱流为事件 owner，异放/耀变为 main C） */
+  /**
+   * 增伤/倍率/暴击等 bonus 乘区所属角色展示名
+   * （紊乱/乱流 → 招式持有者；属性异常/异放/耀变 → 异常类触发者）
+   */
   bonusAgent?: string
-  /** 异化系数区所属角色（蕾米埃尔） */
+  /** 异化系数区所属角色展示名（如「异化系数 · 蕾米埃尔」） */
   mutationAgent?: string
+}
+
+/** 公式标题上的身份前缀，避免只显示角色名时误解来源 */
+export function formatAnomalyFormulaAgentLabel(
+  role: 'anomalyPower' | 'owner' | 'trigger' | 'mutation',
+  agentName: string | null | undefined,
+): string | undefined {
+  const name = agentName?.trim()
+  if (!name) return undefined
+  if (role === 'anomalyPower') return `异常强度提供者 · ${name}`
+  if (role === 'owner') return `招式持有者 · ${name}`
+  if (role === 'trigger') return `异常类触发者 · ${name}`
+  return `异化系数 · ${name}`
 }
 
 export interface AlignedFormulaTerm {
@@ -50,32 +68,37 @@ export function buildAlignedAnomalyFormulaGroups(
     ? [
         {
           label: '局内攻击力',
-          value: formatNumber(p.remielSelfInCombatAtk ?? 0),
-          tipsKey: 'anomalyBaseExpected',
+          value: formatFormulaNumber(p.remielSelfInCombatAtk ?? 0, 4),
+          tipsKey: 'remielSelfInCombatAtk',
         },
         {
           label: '局内精通区',
           value: formatFormulaNumber(p.remielSelfInCombatMasteryZone ?? 0),
-          tipsKey: 'masteryZone',
+          tipsKey: 'remielSelfInCombatMasteryZone',
         },
         {
           label: '特殊等级区',
           value: formatFormulaNumber(p.remielSelfSpecialLevelZone ?? 1),
-          tipsKey: 'levelZone',
+          tipsKey: 'remielSelfSpecialLevelZone',
         },
         {
           label: '异化系数区',
-          value: formatFormulaNumber(p.mutationZone),
+          value: formatFormulaNumber(p.remielSelfMutationZone ?? p.mutationZone),
           tipsKey: 'mutationZone',
         },
         {
           label: '等级区',
           value: formatFormulaNumber(p.remielSelfStandardLevelZone ?? 1),
-          tipsKey: 'levelZone',
+          tipsKey: 'remielSelfStandardLevelZone',
         },
       ]
     : [
         { label: '通用乘区', value: formatFormulaNumber(p.generalMultiplier, 2), tipsKey: 'generalMultiplier' },
+        {
+          label: '非直伤易伤区',
+          value: formatFormulaNumber(p.anomalyVulnerableMultiplier),
+          tipsKey: 'anomalyVulnerableMultiplier',
+        },
         { label: '精通区', value: formatFormulaNumber(p.masteryZone), tipsKey: 'masteryZone' },
         { label: '等级区', value: formatFormulaNumber(p.levelZone), tipsKey: 'levelZone' },
         { label: '特殊乘区', value: formatFormulaNumber(p.specialMultiplier), tipsKey: 'specialMultiplier' },
@@ -89,12 +112,7 @@ export function buildAlignedAnomalyFormulaGroups(
   }
   const base: AlignedAnomalyFormulaGroup = {
     key: 'anomalyBaseExpected',
-    title: remielSelf ? '蕾米埃尔异常基础' : '异常基础',
-    hint: remielSelf
-      ? '（局内攻/精不含队友增益；已含异化系数与双等级区）'
-      : p.mutationZone > 1
-        ? '（含异化系数；不含异常增伤/倍率/暴击）'
-        : '（不含异常增伤/倍率/暴击）',
+    title: remielSelf ? '蕾米埃尔异常基础' : '异常基础期望',
     agentLabel: labels?.baseAgent,
     terms: baseTerms,
     result: formatNumber(baseWithMutation),
@@ -202,6 +220,16 @@ export function buildAlignedAnomalyFormulaGroups(
             label: '抗性区',
             value: formatFormulaNumber(p.remielSelfResistanceMultiplier ?? 1),
             tipsKey: 'remielSelfResistanceMultiplier',
+          },
+          {
+            label: '易伤区',
+            value: formatFormulaNumber(p.anomalyVulnerableMultiplier),
+            tipsKey: 'anomalyVulnerableMultiplier',
+          },
+          {
+            label: '失衡易伤区',
+            value: formatFormulaNumber(p.staggerMultiplier),
+            tipsKey: 'staggerMultiplier',
           },
           {
             label: '耀变综合增伤区',

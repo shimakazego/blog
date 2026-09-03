@@ -100,6 +100,8 @@ const roadmap = [
     border: 1px solid rgba($dark, 0.08);
     background: linear-gradient(180deg, rgba($white, 0.98), rgba($light-1, 0.9));
     box-shadow: 0 18px 40px rgba($dark, 0.08);
+    /* 白卡自含：内部文字固定深色，不随暗色主题变浅 */
+    color: #212529;
 }
 
 .about-profile {

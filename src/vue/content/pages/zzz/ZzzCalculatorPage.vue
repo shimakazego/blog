@@ -3,5 +3,5 @@
 </template>
 
 <script setup>
-import CharacterCalculatorView from "./calculator/CharacterCalculatorView.vue"
+import CharacterCalculatorView from "/src/views/CharacterCalculatorView.vue"
 </script>

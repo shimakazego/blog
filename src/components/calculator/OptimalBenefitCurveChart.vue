@@ -110,14 +110,34 @@ const hoverTipRows = computed(() => {
   if (hoverN.value == null) return []
   const n = hoverN.value
   return [...props.series]
-    .map((s) => ({
-      key: s.key,
-      label: s.label,
-      color: s.color,
-      value: seriesValueAt(s, n),
-    }))
+    .map((s) => {
+      const cumulative = s.cumulativePercent[n] ?? 0
+      const marginal = s.marginalPercent[n] ?? 0
+      const capped = Boolean(s.cappedAt?.[n])
+      const primary =
+        props.mode === 'cumulative' ? cumulative : marginal
+      return {
+        key: s.key,
+        label: s.label,
+        color: s.color,
+        value: primary,
+        marginal,
+        capped,
+      }
+    })
     .sort((a, b) => b.value - a.value)
 })
+
+function formatTipPrimary(row: { value: number; marginal: number; capped: boolean }) {
+  const sign = row.value >= 0 ? '+' : ''
+  const main = `${sign}${row.value.toFixed(3)}%`
+  if (props.mode !== 'cumulative') {
+    return row.capped ? `${main}（已达上限）` : main
+  }
+  if (row.capped) return `${main}（已达上限）`
+  const mSign = row.marginal >= 0 ? '+' : ''
+  return `${main}（${mSign}${row.marginal.toFixed(3)}%）`
+}
 </script>
 
 <template>
@@ -207,7 +227,7 @@ const hoverTipRows = computed(() => {
       <p class="line-tip__label">新增 {{ hoverN }} 词条</p>
       <p v-for="row in hoverTipRows" :key="row.key" class="line-tip__row">
         <i :style="{ background: row.color }" />
-        {{ row.label }}：<strong>{{ row.value >= 0 ? '+' : '' }}{{ row.value.toFixed(3) }}%</strong>
+        {{ row.label }}：<strong>{{ formatTipPrimary(row) }}</strong>
       </p>
     </div>
     </div>

@@ -6,18 +6,24 @@ import type {
   BangbooBuffDoc,
   BaseDamageSource,
   BuffStatModifiers,
-  DamageEvent,
   DamageEventKind,
+  DamageEventMultOverrides,
   DriveDiscBuffDoc,
   SkillCalcContext,
   SkillSubcategory,
   WengineBuffDoc,
 } from '@/types/calculator'
 import type { AffixCounts, AffixDriveDiscMainStats, PanelStats } from '@/types/calculatorPanel'
-import { createEmptyAffixCounts, createDefaultExternalPanel } from '@/types/calculatorPanel'
+import {
+  createEmptyAffixCounts,
+  createDefaultExternalPanel,
+  fillPanelStatsDefaults,
+  isPlaceholderExternalPanel,
+} from '@/types/calculatorPanel'
 import {
   AFFIX_VALUE_PER_COUNT,
   computeExternalPanelFromAffixes,
+  computeExternalPanelFromTeamSlot,
   type AffixPanelCalcInput,
 } from '@/utils/affixPanelCalc'
 import {
@@ -31,27 +37,34 @@ import {
   type DamageEnemyInput,
 } from '@/utils/damageCalc'
 import {
-  eventNeedsAnomalyProducer,
-  mapEventKindToCalc,
   pickEventDamage,
-  formatDamageEventDisplayName,
-  getDamageEventSkipReason,
   applyOwnerPanelMultOverrides,
   applyRadianceBonusMultOverrides,
+  splitSkillZoneMultOverrides,
 } from '@/utils/damageEvent'
-import { resolveEventOwnerAgentId } from '@/utils/damageEventOwner'
-import { buildSkillContextFromDamageEvent, mergeExtraModsForEvent } from '@/utils/extraBuffCalc'
+import {
+  buildSkillContextFromHit,
+  getHitSkipReason,
+  skillNeedsDualAgents,
+  applyHitPanelMods,
+  type ResolvedHit,
+} from '@/utils/resolvedHit'
+import { mergeExtraModsForEvent } from '@/utils/extraBuffCalc'
 import {
   computeMutationZone,
   findLuminousAgentInTeam,
-  isRemielSelfRadianceTrigger,
+  isRemielSelfRadiancePowerProvider,
   resolveDamageCalcResistanceElements,
 } from '@/utils/remielUtils'
-import { resolveRemielSelfRadianceCalcInput } from '@/utils/remielSelfRadiancePanel'
+import {
+  collectRemielSelfRestrictedContributions,
+  computeRemielSelfInCombatPanel,
+  resolveRemielSelfRadianceCalcInput,
+} from '@/utils/remielSelfRadiancePanel'
+import { mergeSkillSubcategoryMultOverrides } from '@/utils/skillSubcategoryMult'
 import {
   computeFinalPanel,
-  convertSlotPartialToExternalPanel,
-  resolveMainCAnomalyReleaseMultFields,
+  resolveAnomalyReleaseMultFields,
   type BuffSelectionState,
   type MultiSlotBuffSelection,
   type PanelCalcContext,
@@ -59,7 +72,7 @@ import {
   panelToConvertAttrValues,
   buildPanelSourceValuesBySlotRecord,
 } from '@/utils/panelBuffCalc'
-import { resolveIsFollowUp } from '@/utils/buffEffect'
+import { formatAnomalyFormulaAgentLabel } from '@/utils/anomalyFormulaDisplay'
 
 export type OptimalDamageKind = 'direct' | 'anomaly'
 
@@ -68,8 +81,10 @@ export type OptimalAnomalyMetric = 'anomaly' | 'disorder' | 'turbulence' | 'anom
 export type OptimalAffixKey =
   | 'atkFlat'
   | 'hpFlat'
+  | 'defFlat'
   | 'atkPercent'
   | 'hpPercent'
+  | 'defPercent'
   | 'pen'
   | 'critRate'
   | 'critDmg'
@@ -111,7 +126,7 @@ export interface OptimalEventAffixImpact extends OptimalEventDamageLine {
 }
 
 export interface OptimalEventEvalDetail {
-  event: DamageEvent
+  hit: ResolvedHit
   eventId: string
   displayName: string
   kind: DamageEventKind
@@ -129,16 +144,40 @@ export interface OptimalEventEvalDetail {
   producerExternalPanel?: PanelStats
   producerBreakdown?: OptimalPanelBreakdown
   producerAgentLabel?: string
+  /** 类型增伤/倍率面板（属性异常/异放/耀变=异常类触发者；紊乱/乱流=招式持有者） */
+  bonusFinalPanel?: PanelStats
+  bonusExternalPanel?: PanelStats
+  bonusBreakdown?: OptimalPanelBreakdown
+  /** 减防/无视 tip（异常类触发者面板） */
+  defenseTriggerFinalPanel?: PanelStats
+  defenseTriggerExternalPanel?: PanelStats
+  defenseTriggerBreakdown?: OptimalPanelBreakdown
+  defenseTriggerAgentLabel?: string
   /** 异常基础乘区角色名 */
   baseAgentLabel?: string
-  /** 增伤/倍率乘区角色名（主 C） */
+  /** 增伤/倍率乘区角色名 */
   bonusAgentLabel?: string
   /** 异化系数区角色名（蕾米埃尔） */
   mutationAgentLabel?: string
+  mutationFinalPanel?: PanelStats
+  mutationExternalPanel?: PanelStats
+  mutationSources?: OptimalPanelBreakdown['sources']
+  remielSelfAtkSourceItems?: string[]
+  remielSelfMasterySourceItems?: string[]
+  remielSelfExternalPanel?: PanelStats
+  remielSelfSources?: OptimalPanelBreakdown['sources']
+  remielSelfFinalPanel?: PanelStats
+  remielIsMb?: boolean
 }
 
 /** 受 4/5/6 主词条计数约束的副词条 */
-export type CappedAffixKey = 'atkPercent' | 'hpPercent' | 'critRate' | 'critDmg' | 'mastery'
+export type CappedAffixKey =
+  | 'atkPercent'
+  | 'hpPercent'
+  | 'defPercent'
+  | 'critRate'
+  | 'critDmg'
+  | 'mastery'
 
 export type AffixRollCaps = Record<CappedAffixKey, number>
 
@@ -146,6 +185,7 @@ export type AffixRollCaps = Record<CappedAffixKey, number>
 const CAPPED_AFFIX_TO_MAIN_STAT: Record<CappedAffixKey, string> = {
   atkPercent: 'externalAtkPercent',
   hpPercent: 'externalHpPercent',
+  defPercent: 'externalDefPercent',
   critRate: 'critRate',
   critDmg: 'critDmg',
   mastery: 'mastery',
@@ -177,6 +217,7 @@ export function getAffixRollCaps(mainStats: AffixDriveDiscMainStats): AffixRollC
   return {
     atkPercent: affixRollCap(mainStats, 'atkPercent'),
     hpPercent: affixRollCap(mainStats, 'hpPercent'),
+    defPercent: affixRollCap(mainStats, 'defPercent'),
     critRate: affixRollCap(mainStats, 'critRate'),
     critDmg: affixRollCap(mainStats, 'critDmg'),
     mastery: affixRollCap(mainStats, 'mastery'),
@@ -196,6 +237,16 @@ function exceedsAffixCap(
   return count > affixRollCap(mainStats, key)
 }
 
+export function affixCapLimitNote(
+  mainStats: AffixDriveDiscMainStats,
+  key: OptimalAffixKey,
+  currentCount: number,
+): string {
+  if (!isCappedAffixKey(key)) return '已达可分配上限'
+  const cap = affixRollCap(mainStats, key)
+  return `已达主词条约束上限（当前 ${currentCount}/${cap}）`
+}
+
 export interface DirectAllocState {
   /** 攻击力条数（非命破为主 flat；命破时也需填写） */
   flatStat: number
@@ -204,8 +255,10 @@ export interface DirectAllocState {
   /** 命破：局外大攻击条数（固定填写，不参与扫掠） */
   atkPercent: number
   pen: number
+  /** 精通条数（固定填写，不参与总词条扫掠） */
+  mastery: number
   critRate: number
-  /** 非命破 = 暴击 + 爆伤 + 局外大攻击；命破 = 暴击 + 爆伤 + 局外大生命 + 局外大攻击 */
+  /** 非命破 = 暴击 + 爆伤 + 局外大攻击；命破 = 暴击 + 爆伤 + 局外大生命 + 局外大攻击（不含精通） */
   totalRolls: number
 }
 
@@ -230,10 +283,14 @@ export interface OptimalEvalContext {
   mainAgentElement: string
   mainAgentId: string
   mainAgentName: string
-  /** 伤害事件列表：有则最优词条按事件总伤期望扫掠 */
-  damageEvents?: DamageEvent[]
+  /**
+   * 流程展开后的结算列表：有则最优词条按总伤期望扫掠。
+   * 与主计算页共用同一份，保证准备阶段倍率与流程次数两边一致（§15）。
+   */
+  hits?: ResolvedHit[]
   /** 额外 Buff（按事件 scope 匹配，与面板计算共用） */
   extraGains?: ExtraBuffGain[]
+  /** 页级异常强度提供者 id（命名含 trigger，实为 power）；有 hits 时优先逐击字段 */
   triggerAnomalyAgentId?: string | null
   slotBuffSelections?: MultiSlotBuffSelection | null
   resolveSubcategory?: (id: string | null) => SkillSubcategory | null
@@ -247,8 +304,8 @@ export interface DirectSweepPoint {
   critDmg: number
   label: string
   affixCounts: AffixCounts
-  /** 扫掠时缓存完整评估，柱体切换时复用 */
-  evalSnapshot: {
+  /** 完整评估较重；扫掠默认不填，点柱/过程 Tab 再懒算 */
+  evalSnapshot?: {
     finalPanel: PanelStats
     result: DamageCalcResult
     piercePower: number
@@ -256,7 +313,7 @@ export interface DirectSweepPoint {
     breakdown: OptimalPanelBreakdown
     grandTotal: number
     eventLines: OptimalEventDamageLine[]
-  }
+  } | null
   directExpected: number
   eventLines: OptimalEventDamageLine[]
   grandTotal: number
@@ -285,6 +342,9 @@ export interface AffixDiffRow {
   addOne: number
   damageDelta: number
   percentDelta: number
+  /** 已达主词条约束上限，无法再 +1 */
+  capped?: boolean
+  note?: string
 }
 
 export interface AffixReplaceRow {
@@ -296,6 +356,8 @@ export interface AffixReplaceRow {
   addOne: number
   damageDelta: number
   percentDelta: number
+  capped?: boolean
+  note?: string
 }
 
 export interface BenefitCurveSeries {
@@ -306,6 +368,8 @@ export interface BenefitCurveSeries {
   cumulativePercent: number[]
   /** values[n] = marginal % of the n-th roll */
   marginalPercent: number[]
+  /** values[n] = 第 n 条因上限未计入 */
+  cappedAt: boolean[]
 }
 
 function clampInt(value: number, min: number, max: number) {
@@ -313,20 +377,31 @@ function clampInt(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.round(value)))
 }
 
-export function flatStatKey(isMb: boolean): 'atkFlat' | 'hpFlat' {
-  return isMb ? 'hpFlat' : 'atkFlat'
+export function flatStatKey(isMb: boolean, isFengYu = false): 'atkFlat' | 'hpFlat' | 'defFlat' {
+  if (isMb) return 'hpFlat'
+  if (isFengYu) return 'defFlat'
+  return 'atkFlat'
 }
 
-export function outPercentKey(isMb: boolean): 'atkPercent' | 'hpPercent' {
-  return isMb ? 'hpPercent' : 'atkPercent'
+export function outPercentKey(
+  isMb: boolean,
+  isFengYu = false,
+): 'atkPercent' | 'hpPercent' | 'defPercent' {
+  if (isMb) return 'hpPercent'
+  if (isFengYu) return 'defPercent'
+  return 'atkPercent'
 }
 
-export function flatStatLabel(isMb: boolean) {
-  return isMb ? '生命值' : '攻击力'
+export function flatStatLabel(isMb: boolean, isFengYu = false) {
+  if (isMb) return '生命值'
+  if (isFengYu) return '防御力'
+  return '攻击力'
 }
 
-export function outPercentLabel(isMb: boolean) {
-  return isMb ? '局外大生命' : '局外大攻击'
+export function outPercentLabel(isMb: boolean, isFengYu = false) {
+  if (isMb) return '局外大生命'
+  if (isFengYu) return '局外大防御'
+  return '局外大攻击'
 }
 
 export function affixKeyLabel(key: OptimalAffixKey, _isMb: boolean): string {
@@ -335,10 +410,14 @@ export function affixKeyLabel(key: OptimalAffixKey, _isMb: boolean): string {
       return '攻击力'
     case 'hpFlat':
       return '生命值'
+    case 'defFlat':
+      return '防御力'
     case 'atkPercent':
       return '局外大攻击'
     case 'hpPercent':
       return '局外大生命'
+    case 'defPercent':
+      return '局外大防御'
     case 'pen':
       return '穿透值'
     case 'critRate':
@@ -358,6 +437,7 @@ export function validateDirectAlloc(
   const atkFlat = clampInt(state.flatStat, 0, 99)
   const hpFlat = clampInt(state.hpFlat, 0, 99)
   const pen = clampInt(state.pen, 0, 99)
+  const mastery = clampInt(state.mastery, 0, 99)
   const crit = clampInt(state.critRate, 0, DIRECT_CONSTRAINTS.maxTotalRolls)
   const total = clampInt(state.totalRolls, 0, DIRECT_CONSTRAINTS.maxTotalRolls)
   const fixedAtkPercent = isMb ? clampInt(state.atkPercent, 0, 99) : 0
@@ -369,15 +449,18 @@ export function validateDirectAlloc(
     return `总词条数不能超过 ${DIRECT_CONSTRAINTS.maxTotalRolls}`
   }
   const flatPenTotal = isMb
-    ? atkFlat + hpFlat + pen + total
-    : atkFlat + pen + total
+    ? mastery + atkFlat + hpFlat + pen + total
+    : mastery + atkFlat + pen + total
   if (flatPenTotal > DIRECT_CONSTRAINTS.maxAtkPenTotal) {
     return isMb
-      ? `攻击力+生命值+穿透+总词条数不能超过 ${DIRECT_CONSTRAINTS.maxAtkPenTotal}`
-      : `${flatStatLabel(isMb)}+穿透+总词条数不能超过 ${DIRECT_CONSTRAINTS.maxAtkPenTotal}`
+      ? `精通+攻击力+生命值+穿透+总词条数不能超过 ${DIRECT_CONSTRAINTS.maxAtkPenTotal}`
+      : `精通+${flatStatLabel(isMb)}+穿透+总词条数不能超过 ${DIRECT_CONSTRAINTS.maxAtkPenTotal}`
   }
   if (mainStats) {
     const caps = getAffixRollCaps(mainStats)
+    if (mastery > caps.mastery) {
+      return `精通条数不能超过主词条约束上限 ${caps.mastery}`
+    }
     if (crit > caps.critRate) {
       return `暴击条数不能超过主词条约束上限 ${caps.critRate}`
     }
@@ -433,6 +516,7 @@ export function buildDirectAffixCounts(
 ): AffixCounts {
   const counts = createEmptyAffixCounts()
   counts.pen = clampInt(state.pen, 0, 99)
+  counts.mastery = clampInt(state.mastery, 0, 99)
   counts.critRate = clampInt(state.critRate, 0, 99)
   counts.critDmg = clampInt(critDmg, 0, 99)
   if (isMb) {
@@ -471,29 +555,18 @@ export type OptimalPanelBreakdown = ReturnType<typeof computeFinalPanel>
 
 function buildOptimalExtraModsForEvent(
   ctx: OptimalEvalContext,
-  event: DamageEvent,
+  hit: ResolvedHit,
   slotAgentId: string,
 ): BuffStatModifiers {
   const gains = ctx.extraGains ?? []
   if (!gains.length) return createEmptyBuffStatModifiers()
-  const ownerAgentId = resolveEventOwnerAgentId(event, ctx.mainAgentId)
-  const skillCtx = buildSkillContextFromDamageEvent(event, {
-    ownerAgentId,
-    agents: ctx.panelContext.agents,
-    skillSubcategories: ctx.skillSubcategories ?? [],
-    followUpSkillRules: ctx.followUpSkillRules ?? [],
-    resolveBuffElement: (agentId) =>
-      ctx.panelContext.agents.find((item) => item.id === agentId)?.element,
-    resolveTriggerElement: (evt) => {
-      const raw = evt.triggerAgentId ?? ctx.triggerAnomalyAgentId
-      if (!raw || raw === '__at_calc__') return undefined
-      return ctx.panelContext.agents.find((item) => item.id === raw)?.element
-    },
-  })
-  return mergeExtraModsForEvent(gains, event, skillCtx, {
+  const ownerAgentId = hit.ownerAgentId
+  const ownerElement = ctx.panelContext.agents.find((item) => item.id === ownerAgentId)?.element
+  const slotIndex = ctx.panelContext.teamSlots.findIndex((slot) => slot.agentId === slotAgentId)
+  return mergeExtraModsForEvent(gains, buildSkillContextFromHit(hit, ownerElement), {
+    slotIndex,
     slotAgentId,
-    ownerAgentId,
-    staggerPhase: event.staggerPhase,
+    staggerPhase: hit.staggerPhase,
     resolveAgentProfession: (agentId) =>
       ctx.panelContext.agents.find((item) => item.id === agentId)?.profession,
     teamSlots: ctx.panelContext.teamSlots,
@@ -518,6 +591,7 @@ function buildPanelContextForSlot(
     mainSlotIndex: slotIndex,
     mainExternalPanel: mainExternalPanel,
     extraMods,
+    extraGains: ctx.extraGains,
     buffSelection: ctx.slotBuffSelections
       ? resolveBuffSelectionForSlot(ctx.slotBuffSelections, slotIndex)
       : ctx.panelContext.buffSelection,
@@ -537,18 +611,22 @@ function buildPanelContextForSlot(
 
 function resolveRemielSelfRadianceCalcForOptimal(
   ctx: OptimalEvalContext,
-  triggerAgentId: string | null | undefined,
+  anomalyPowerAgentId: string | null | undefined,
   mainExternal: PanelStats,
+  skillContext?: import('@/types/calculator').SkillCalcContext,
 ) {
   const remiel = findLuminousAgentInTeam(ctx.panelContext.teamSlots, ctx.panelContext.agents)
-  if (!remiel || !isRemielSelfRadianceTrigger(triggerAgentId, remiel.id)) return undefined
+  if (!remiel || !isRemielSelfRadiancePowerProvider(anomalyPowerAgentId, remiel.id)) {
+    return undefined
+  }
   const external = resolveExternalForAgent(ctx, remiel.id, remiel.slotIndex, mainExternal)
   const agent = ctx.panelContext.agents.find((item) => item.id === remiel.id)
+  const baseCtx = buildPanelContextForSlot(ctx, remiel.slotIndex, external, mainExternal)
   return resolveRemielSelfRadianceCalcInput({
     teamSlots: ctx.panelContext.teamSlots,
     agents: ctx.panelContext.agents,
     externalPanel: external,
-    panelCtx: buildPanelContextForSlot(ctx, remiel.slotIndex, external, mainExternal),
+    panelCtx: skillContext ? { ...baseCtx, skillContext } : baseCtx,
     remielSlotIndex: remiel.slotIndex,
     agentLevel: resolveProducerAgentLevel(ctx, remiel.id),
     isMb: agent?.profession === MB_PROFESSION,
@@ -562,10 +640,10 @@ function resolveExternalForAgent(
   mainExternal: PanelStats,
 ): PanelStats {
   if (slotIndex === ctx.panelContext.mainSlotIndex) return mainExternal
+  const mapped = ctx.panelContext.slotExternalPanels?.[slotIndex]
+  if (mapped) return fillPanelStatsDefaults(mapped)
   const anomaly = ctx.panelContext.anomalySlotPanels?.[agentId]
-  if (anomaly) return { ...anomaly }
-  const partial = ctx.panelContext.convertSlotPanels?.[agentId]
-  if (partial) return convertSlotPartialToExternalPanel(partial)
+  if (anomaly) return fillPanelStatsDefaults(anomaly)
   return createDefaultExternalPanel()
 }
 
@@ -576,7 +654,7 @@ function resolveProducerAgentLevel(_ctx: OptimalEvalContext, agentId: string | n
 
 function applyEventMultOverrides(
   finalPanel: PanelStats,
-  overrides: DamageEvent['multOverrides'],
+  overrides: DamageEventMultOverrides | null | undefined,
 ): PanelStats {
   return applyOwnerPanelMultOverrides(finalPanel, overrides)
 }
@@ -584,7 +662,14 @@ function applyEventMultOverrides(
 function resolveLuminousTeamModifiersForOptimal(
   ctx: OptimalEvalContext,
   mainExternal: PanelStats,
-): { mutationZone: number; radianceResPen: number } {
+): {
+  mutationZone: number
+  radianceResPen: number
+  finalPanel?: PanelStats
+  external?: PanelStats
+  sources?: OptimalPanelBreakdown['sources']
+  remielIsMb?: boolean
+} {
   const found = findLuminousAgentInTeam(ctx.panelContext.teamSlots, ctx.panelContext.agents)
   if (!found) return { mutationZone: 1, radianceResPen: 0 }
   const tSlotIndex = found.slotIndex
@@ -602,70 +687,58 @@ function resolveLuminousTeamModifiersForOptimal(
     },
   })
   const panel = breakdown.finalPanel
+  const agent = ctx.panelContext.agents.find((item) => item.id === found.id)
   return {
     mutationZone: computeMutationZone(panel),
     radianceResPen: panel.radianceResPen,
+    finalPanel: panel,
+    external: producerExternal,
+    sources: breakdown.sources,
+    remielIsMb: agent?.profession === MB_PROFESSION,
   }
 }
 
 export function evaluateOptimalEventDetail(
   ctx: OptimalEvalContext,
   mainExternal: PanelStats,
-  event: DamageEvent,
+  hit: ResolvedHit,
 ): OptimalEventEvalDetail | null {
-  const skipReason = getDamageEventSkipReason(event, {
+  const skipReason = getHitSkipReason(hit, {
     teamSlots: ctx.panelContext.teamSlots,
     agents: ctx.panelContext.agents,
-    mainAgentId: ctx.mainAgentId,
   })
   if (skipReason) return null
 
-  const { damageKind, anomalySubKind } = mapEventKindToCalc(event.kind)
-  const eventNeedsTrigger = eventNeedsAnomalyProducer(event.kind)
+  const damageType = hit.skill.damageType
+  const anomalySubKind = hit.anomalySubKind
+  const eventNeedsTrigger = skillNeedsDualAgents(damageType)
   const mainSlotIndex = ctx.panelContext.mainSlotIndex
-  const ownerAgentId = resolveEventOwnerAgentId(event, ctx.mainAgentId)
+  const ownerAgentId = hit.ownerAgentId
   const ownerSlotIndexRaw = ctx.panelContext.teamSlots.findIndex(
     (slot) => slot.agentId === ownerAgentId,
   )
   const ownerSlotIndex = ownerSlotIndexRaw >= 0 ? ownerSlotIndexRaw : mainSlotIndex
 
-  const rawTriggerId = event.triggerAgentId ?? ctx.triggerAnomalyAgentId
-  const evtTriggerAgentId =
-    rawTriggerId && rawTriggerId !== '__at_calc__' ? rawTriggerId : null
-  if (eventNeedsTrigger && !evtTriggerAgentId) return null
+  const evtPowerAgentId = hit.anomalyPowerAgentId
+  if (eventNeedsTrigger && !evtPowerAgentId) return null
 
   const ownerAgent = ctx.panelContext.agents.find((item) => item.id === ownerAgentId)
   const evtOwnerIsMb = ownerAgent?.profession === MB_PROFESSION
-  const evtBaseDamageSource: BaseDamageSource = evtOwnerIsMb ? 'pierce' : ctx.baseDamageSource
+  const evtOwnerIsFengYu = ownerAgent?.profession === '锋御'
+  const evtBaseDamageSource: BaseDamageSource = evtOwnerIsMb
+    ? 'pierce'
+    : evtOwnerIsFengYu
+      ? 'def'
+      : ctx.baseDamageSource
+  const evtUseSharpen = evtOwnerIsFengYu || damageType === 'sharpen'
 
-  const tAgent = evtTriggerAgentId
-    ? ctx.panelContext.agents.find((a) => a.id === evtTriggerAgentId)
+  const tAgent = evtPowerAgentId
+    ? ctx.panelContext.agents.find((a) => a.id === evtPowerAgentId)
     : undefined
-  const evtTriggerElement = eventNeedsTrigger ? tAgent?.element : ctx.mainAgentElement
+  const evtPowerElement = eventNeedsTrigger ? tAgent?.element : ownerAgent?.element
   const evtTriggerIsMb = tAgent?.profession === MB_PROFESSION
 
-  const skillBound = event.skillBound !== false || damageKind === 'direct'
-  const evtIsFollowUp = skillBound
-    ? resolveIsFollowUp({
-        agentId: ownerAgentId,
-        categoryId: event.categoryId,
-        subcategoryId: event.skillSubcategoryId,
-        skillSubcategories: ctx.skillSubcategories ?? [],
-        followUpSkillRules: ctx.followUpSkillRules ?? [],
-      })
-    : false
-
-  const ownerBuffElement = ownerAgent?.element
-
-  const skillCtx = {
-    damageKind,
-    categoryId: skillBound ? event.categoryId : ('basic' as const),
-    subcategoryId: skillBound ? (event.skillSubcategoryId ?? null) : null,
-    element: ownerBuffElement,
-    staggerPhase: event.staggerPhase,
-    isFollowUp: evtIsFollowUp,
-    anomalySubKind,
-  }
+  const skillCtx = buildSkillContextFromHit(hit, ownerAgent?.element)
 
   const ownerExternal = resolveExternalForAgent(
     ctx,
@@ -673,7 +746,7 @@ export function evaluateOptimalEventDetail(
     ownerSlotIndex,
     mainExternal,
   )
-  const ownerExtraMods = buildOptimalExtraModsForEvent(ctx, event, ownerAgentId)
+  const ownerExtraMods = buildOptimalExtraModsForEvent(ctx, hit, ownerAgentId)
   const evtPanelCtx = {
     ...buildPanelContextForSlot(
       ctx,
@@ -685,21 +758,12 @@ export function evaluateOptimalEventDetail(
     skillContext: skillCtx,
   }
   const evtBreakdown = computeFinalPanel(ownerExternal, evtPanelCtx)
-  let evtFinalPanel = applyEventMultOverrides(evtBreakdown.finalPanel, event.multOverrides)
-
-  if (event.kind === 'anomalyRelease') {
-    const releaseFields = resolveMainCAnomalyReleaseMultFields(
-      ownerExternal,
-      evtPanelCtx,
-      evtTriggerElement,
-    )
-    if (event.multOverrides?.anomalyReleaseMult == null) {
-      evtFinalPanel.anomalyReleaseMult = releaseFields.anomalyReleaseMult
-    }
-    if (event.multOverrides?.anomalyReleaseMultFactor == null) {
-      evtFinalPanel.anomalyReleaseMultFactor = releaseFields.anomalyReleaseMultFactor
-    }
-  }
+  const zoneMultResolved = splitSkillZoneMultOverrides(damageType, hit.multOverrides)
+  const panelOverrides = zoneMultResolved.panelOverrides
+  let evtFinalPanel = applyHitPanelMods(
+    applyEventMultOverrides(evtBreakdown.finalPanel, panelOverrides),
+    hit.panelMods,
+  )
 
   const evtPierce = computePiercePower(
     evtFinalPanel.hp,
@@ -712,74 +776,67 @@ export function evaluateOptimalEventDetail(
   let producerBreakdown: OptimalPanelBreakdown | undefined
   let producerExternalPanel: PanelStats | undefined
 
+  /** 异常强度提供者是否不是主 C（扫掠敏感度等元数据用） */
   const usesNonMainProducer = Boolean(
-    eventNeedsTrigger && evtTriggerAgentId && evtTriggerAgentId !== ctx.mainAgentId,
+    eventNeedsTrigger && evtPowerAgentId && evtPowerAgentId !== ctx.mainAgentId,
   )
   const mainlyProducerDriven =
     usesNonMainProducer &&
-    (event.kind === 'disorder' || event.kind === 'turbulence' || event.kind === 'anomaly')
+    (damageType === 'disorder' || damageType === 'turbulence' || damageType === 'anomaly')
 
-  if (eventNeedsTrigger && evtTriggerAgentId) {
+  if (eventNeedsTrigger && evtPowerAgentId) {
     const tSlotIndex = ctx.panelContext.teamSlots.findIndex(
-      (slot) => slot.agentId === evtTriggerAgentId,
+      (slot) => slot.agentId === evtPowerAgentId,
     )
     if (tSlotIndex < 0) return null
 
-    if (evtTriggerAgentId === ownerAgentId) {
+    if (evtPowerAgentId === ownerAgentId) {
+      // 提供者 = 持有者：复用已算好的持有者面板，并显式填入 producer* 供过程明细展示
       evtTriggerFinalPanel = evtFinalPanel
       evtTriggerPierce = evtPierce
+      producerExternalPanel = ownerExternal
+      producerBreakdown = evtBreakdown
     } else {
-      const tExternal = resolveExternalForAgent(
-        ctx,
-        evtTriggerAgentId,
-        tSlotIndex,
-        mainExternal,
-      )
+      const tExternal = resolveExternalForAgent(ctx, evtPowerAgentId, tSlotIndex, mainExternal)
       producerExternalPanel = tExternal
-      const tExtraMods = buildOptimalExtraModsForEvent(ctx, event, evtTriggerAgentId)
+      const tExtraMods = buildOptimalExtraModsForEvent(ctx, hit, evtPowerAgentId)
       producerBreakdown = computeFinalPanel(tExternal, {
         ...buildPanelContextForSlot(ctx, tSlotIndex, tExternal, mainExternal, tExtraMods),
-        skillContext: {
-          damageKind: 'anomaly',
-          categoryId: skillBound ? event.categoryId : 'basic',
-          subcategoryId: skillBound ? (event.skillSubcategoryId ?? null) : null,
-          element: tAgent?.element,
-          staggerPhase: event.staggerPhase,
-          isFollowUp: resolveIsFollowUp({
-            agentId: tAgent?.id,
-            categoryId: skillBound ? event.categoryId : 'basic',
-            subcategoryId: skillBound ? (event.skillSubcategoryId ?? null) : null,
-            skillSubcategories: ctx.skillSubcategories ?? [],
-            followUpSkillRules: ctx.followUpSkillRules ?? [],
-          }),
-          anomalySubKind,
-        },
+        skillContext: buildSkillContextFromHit(hit, tAgent?.element),
       })
-      evtTriggerFinalPanel = producerBreakdown.finalPanel
+      // 招式倍率覆写：紊乱/乱流落到强度提供者面板（最终倍率区填写不进面板基础字段）
+      evtTriggerFinalPanel = applyEventMultOverrides(producerBreakdown.finalPanel, {
+        disorderBaseMult: panelOverrides?.disorderBaseMult,
+        disorderBaseMultFactor: panelOverrides?.disorderBaseMultFactor,
+        disorderCompMult: panelOverrides?.disorderCompMult,
+        turbulenceBaseMult: panelOverrides?.turbulenceBaseMult,
+        turbulenceBaseMultFactor: panelOverrides?.turbulenceBaseMultFactor,
+        turbulenceCompMult: panelOverrides?.turbulenceCompMult,
+      })
       evtTriggerPierce = computePiercePower(
-        producerBreakdown.finalPanel.hp,
-        producerBreakdown.finalPanel.atk,
+        evtTriggerFinalPanel.hp,
+        evtTriggerFinalPanel.atk,
         producerBreakdown.totalMods.pierce,
       )
     }
 
-    const o = event.multOverrides
+    const o = hit.multOverrides
     if (evtTriggerFinalPanel) {
-      if (event.kind === 'disorder') {
-        if (o?.disorderBaseMult == null) {
+      if (damageType === 'disorder') {
+        if (o?.disorderZoneMult == null && o?.disorderBaseMult == null) {
           evtFinalPanel.disorderBaseMult = evtTriggerFinalPanel.disorderBaseMult
         }
-        if (o?.disorderBaseMultFactor == null) {
+        if (o?.disorderZoneMult == null && o?.disorderBaseMultFactor == null) {
           evtFinalPanel.disorderBaseMultFactor = evtTriggerFinalPanel.disorderBaseMultFactor
         }
         if (o?.disorderCompMult == null) {
           evtFinalPanel.disorderCompMult = evtTriggerFinalPanel.disorderCompMult
         }
-      } else if (event.kind === 'turbulence') {
-        if (o?.turbulenceBaseMult == null) {
+      } else if (damageType === 'turbulence') {
+        if (o?.turbulenceZoneMult == null && o?.turbulenceBaseMult == null) {
           evtFinalPanel.turbulenceBaseMult = evtTriggerFinalPanel.turbulenceBaseMult
         }
-        if (o?.turbulenceBaseMultFactor == null) {
+        if (o?.turbulenceZoneMult == null && o?.turbulenceBaseMultFactor == null) {
           evtFinalPanel.turbulenceBaseMultFactor = evtTriggerFinalPanel.turbulenceBaseMultFactor
         }
         if (o?.turbulenceCompMult == null) {
@@ -789,131 +846,277 @@ export function evaluateOptimalEventDetail(
     }
   }
 
-  const sub = skillBound
-    ? (ctx.resolveSubcategory?.(event.skillSubcategoryId ?? null) ?? null)
-    : null
-  const overrides = event.multOverrides
+  const sub = ctx.resolveSubcategory?.(hit.skill.buffAnchorId ?? null) ?? null
+  const overrides = hit.multOverrides
+  // 倍率修正只写面板，避免与 resolveSkillMults 双重相乘
   const effectiveSub =
-    sub && overrides
-      ? {
-          ...sub,
-          directDmgMult: overrides.directDmgMult ?? sub.directDmgMult,
-          settlementDmgMult: overrides.settlementDmgMult ?? sub.settlementDmgMult,
-          directDmgMultFactor: overrides.directDmgMultFactor ?? sub.directDmgMultFactor,
-          anomalyReleaseMult: overrides.anomalyReleaseMult ?? sub.anomalyReleaseMult,
-          anomalyReleaseMultFactor:
-            overrides.anomalyReleaseMultFactor ?? sub.anomalyReleaseMultFactor,
-          disorderMult: overrides.disorderBaseMult ?? sub.disorderMult,
-          disorderMultFactor: overrides.disorderBaseMultFactor ?? sub.disorderMultFactor,
-        }
-      : sub
+    sub && panelOverrides ? mergeSkillSubcategoryMultOverrides(sub, panelOverrides) : sub
 
   const luminousMods = resolveLuminousTeamModifiersForOptimal(ctx, mainExternal)
 
-  let mainCFinalPanel =
-    ownerAgentId === ctx.mainAgentId
-      ? evtFinalPanel
-      : computeFinalPanel(
+  // 属性异常/异放/耀变类型增伤取触发者；紊乱/乱流取持有者；直伤回落 owner
+  let anomalyTriggerPanel = evtFinalPanel
+  let bonusExternalPanel = ownerExternal
+  let bonusBreakdown: OptimalPanelBreakdown = evtBreakdown
+  if (eventNeedsTrigger) {
+    if (!hit.triggerAgentId) return null
+    if (hit.triggerAgentId !== ownerAgentId) {
+      const trigSlotIndex = ctx.panelContext.teamSlots.findIndex(
+        (slot) => slot.agentId === hit.triggerAgentId,
+      )
+      if (trigSlotIndex < 0) return null
+      const trigExternal = resolveExternalForAgent(
+        ctx,
+        hit.triggerAgentId,
+        trigSlotIndex,
+        mainExternal,
+      )
+      const trigAgent = ctx.panelContext.agents.find((item) => item.id === hit.triggerAgentId)
+      bonusBreakdown = computeFinalPanel(trigExternal, {
+        ...buildPanelContextForSlot(
+          ctx,
+          trigSlotIndex,
+          trigExternal,
           mainExternal,
-          buildPanelContextForSlot(ctx, mainSlotIndex, mainExternal, mainExternal),
-        ).finalPanel
-
-  if (event.kind === 'radiance') {
-    mainCFinalPanel = applyRadianceBonusMultOverrides(mainCFinalPanel, event.multOverrides)
-    if (ownerAgentId === ctx.mainAgentId) {
-      evtFinalPanel = mainCFinalPanel
+          buildOptimalExtraModsForEvent(ctx, hit, hit.triggerAgentId),
+        ),
+        skillContext: buildSkillContextFromHit(hit, trigAgent?.element),
+      })
+      anomalyTriggerPanel = bonusBreakdown.finalPanel
+      bonusExternalPanel = trigExternal
     }
   }
 
+  if (damageType === 'anomaly' || damageType === 'anomalyRelease') {
+    anomalyTriggerPanel = applyEventMultOverrides(anomalyTriggerPanel, {
+      anomalyMult: hit.multOverrides?.anomalyMult,
+      anomalyMultFactor: hit.multOverrides?.anomalyMultFactor,
+      anomalyReleaseMult: hit.multOverrides?.anomalyReleaseMult,
+      anomalyReleaseMultFactor: hit.multOverrides?.anomalyReleaseMultFactor,
+    })
+  }
+
+  if (damageType === 'anomalyRelease') {
+    const needReleaseMult = hit.multOverrides?.anomalyReleaseMult == null
+    const needReleaseFactor = hit.multOverrides?.anomalyReleaseMultFactor == null
+    if (needReleaseMult || needReleaseFactor) {
+      const triggerId = hit.triggerAgentId ?? ownerAgentId
+      const trigSlotIndex = ctx.panelContext.teamSlots.findIndex(
+        (slot) => slot.agentId === triggerId,
+      )
+      const trigExternal =
+        triggerId === ownerAgentId
+          ? ownerExternal
+          : resolveExternalForAgent(ctx, triggerId, trigSlotIndex, mainExternal)
+      const trigAgent = ctx.panelContext.agents.find((item) => item.id === triggerId)
+      const trigPanelCtx =
+        triggerId === ownerAgentId
+          ? evtPanelCtx
+          : {
+              ...buildPanelContextForSlot(
+                ctx,
+                trigSlotIndex,
+                trigExternal,
+                mainExternal,
+                buildOptimalExtraModsForEvent(ctx, hit, triggerId),
+              ),
+              skillContext: buildSkillContextFromHit(hit, trigAgent?.element),
+            }
+      const releaseFields = resolveAnomalyReleaseMultFields(
+        trigExternal,
+        trigPanelCtx,
+        evtPowerElement,
+      )
+      anomalyTriggerPanel = {
+        ...anomalyTriggerPanel,
+        anomalyReleaseMult: needReleaseMult
+          ? releaseFields.anomalyReleaseMult
+          : anomalyTriggerPanel.anomalyReleaseMult,
+        anomalyReleaseMultFactor: needReleaseFactor
+          ? releaseFields.anomalyReleaseMultFactor
+          : anomalyTriggerPanel.anomalyReleaseMultFactor,
+      }
+    }
+  }
+
+  // 耀变综合增伤/倍率/特殊倍率取异常类触发者
+  if (damageType === 'radiance') {
+    anomalyTriggerPanel = applyRadianceBonusMultOverrides(anomalyTriggerPanel, hit.multOverrides)
+  }
+
+  const usesTriggerBonus =
+    damageType === 'anomaly' ||
+    damageType === 'anomalyRelease' ||
+    damageType === 'radiance'
+  const bonusFinalPanel = usesTriggerBonus ? anomalyTriggerPanel : evtFinalPanel
+  const bonusExternalForTips = usesTriggerBonus ? bonusExternalPanel : ownerExternal
+  const bonusBreakdownForTips = usesTriggerBonus ? bonusBreakdown : evtBreakdown
+
+  const ownerResistance = resolveDamageCalcResistanceElements(
+    ctx.panelContext.teamSlots,
+    ctx.panelContext.agents,
+    ownerSlotIndex,
+    evtPowerAgentId,
+  )
+  const triggerAgentDoc = hit.triggerAgentId
+    ? ctx.panelContext.agents.find((item) => item.id === hit.triggerAgentId)
+    : undefined
+
   const result = computeDamageResult({
     finalPanel: evtFinalPanel,
-    mainCFinalPanel,
+    anomalyTriggerPanel,
     piercePower: evtPierce,
     baseDamageSource: evtBaseDamageSource,
     isMbMainAgent: evtOwnerIsMb,
     enemyInput: ctx.enemyInput,
     combatVulnerable: evtBreakdown.combatMods.vulnerable,
+    combatDirectVulnerable: evtBreakdown.combatMods.directVulnerable,
+    combatAnomalyVulnerable: evtBreakdown.combatMods.anomalyVulnerable,
+    combatDmgReduction: evtBreakdown.combatMods.dmgReduction,
+    combatDirectDmgReduction: evtBreakdown.combatMods.directDmgReduction,
+    combatAnomalyDmgReduction: evtBreakdown.combatMods.anomalyDmgReduction,
     combatGlobalStaggerVulnerable: evtBreakdown.combatMods.globalStaggerVulnerable,
     combatStaggerVulnerable: evtBreakdown.combatMods.staggerVulnerable,
     combatStaggerVulnerableOnly: evtBreakdown.combatMods.staggerVulnerableOnly,
     combatSpecial: evtBreakdown.combatMods.special,
     combatPierceDmgBonus: evtBreakdown.combatMods.pierceDmgBonus,
-    staggerPhase: event.staggerPhase,
-    mainAgentElement: ctx.mainAgentElement,
-    ...resolveDamageCalcResistanceElements(
-      ctx.panelContext.teamSlots,
-      ctx.panelContext.agents,
-      ctx.panelContext.mainSlotIndex,
-      evtTriggerAgentId,
-    ),
+    combatSharpenCritDmgBonus: evtBreakdown.combatMods.sharpenCritDmgBonus,
+    combatDmgPenalty: evtBreakdown.combatMods.dmgPenalty,
+    useSharpenFormula: evtUseSharpen,
+    staggerPhase: hit.staggerPhase,
+    ownerAgentElement: ownerAgent?.element ?? '',
+    ownerAgentResistanceElement: ownerResistance.mainAgentResistanceElement,
+    anomalyTriggerElement: triggerAgentDoc?.element,
+    mainAgentElement: ownerAgent?.element ?? '',
+    ...ownerResistance,
     mainAgentId: ctx.mainAgentId,
     mainAgentName: ctx.mainAgentName,
     anomalySubKind,
     triggerFinalPanel: evtTriggerFinalPanel,
-    triggerAgentElement: eventNeedsTrigger ? evtTriggerElement : undefined,
+    triggerAgentElement: eventNeedsTrigger ? evtPowerElement : undefined,
     triggerPiercePower: evtTriggerPierce,
     triggerBaseDamageSource: evtTriggerIsMb ? 'pierce' : 'atk',
     triggerIsMb: evtTriggerIsMb,
     skillSubcategory: effectiveSub,
-    mainAgentLevel: ctx.enemyInput.level,
+    mainAgentLevel: resolveProducerAgentLevel(ctx, ownerAgentId),
     ownerAgentLevel: resolveProducerAgentLevel(ctx, ownerAgentId),
-    triggerAgentLevel: evtTriggerAgentId
-      ? resolveProducerAgentLevel(ctx, evtTriggerAgentId)
+    triggerAgentLevel: evtPowerAgentId
+      ? resolveProducerAgentLevel(ctx, evtPowerAgentId)
       : resolveProducerAgentLevel(ctx, ownerAgentId),
     mutationZone: luminousMods.mutationZone,
-    remielRadianceResPen: event.kind === 'radiance' ? luminousMods.radianceResPen : 0,
+    remielRadianceResPen: damageType === 'radiance' ? luminousMods.radianceResPen : 0,
     remielSelfRadianceCalc: resolveRemielSelfRadianceCalcForOptimal(
       ctx,
-      evtTriggerAgentId,
+      evtPowerAgentId,
       mainExternal,
+      skillCtx,
     ),
+    disorderZoneMultOverride: zoneMultResolved.disorderZoneMult,
+    disorderZoneMultFactorOverride: zoneMultResolved.disorderZoneMultFactor,
+    turbulenceZoneMultOverride: zoneMultResolved.turbulenceZoneMult,
+    turbulenceZoneMultFactorOverride: zoneMultResolved.turbulenceZoneMultFactor,
   })
 
-  const perHit = pickEventDamage(result, event.kind, event.critMode)
-  const total = perHit * Math.max(0, event.count)
-  const displayName = formatDamageEventDisplayName(
-    event,
-    ctx.resolveSubcategory,
-    ownerAgent?.name,
-  )
+  const perHit = pickEventDamage(result, damageType, hit.critMode)
+  const total = perHit * hit.count
+  const displayName = `${ownerAgent?.name ? `${ownerAgent.name} · ` : ''}${hit.skill.name}`
 
   const remiel = findLuminousAgentInTeam(ctx.panelContext.teamSlots, ctx.panelContext.agents)
   const remielName = remiel
     ? ctx.panelContext.agents.find((item) => item.id === remiel.id)?.name
     : undefined
-  const baseAgentLabel = eventNeedsTrigger ? tAgent?.name : ownerAgent?.name
+  const triggerName = hit.triggerAgentId
+    ? ctx.panelContext.agents.find((item) => item.id === hit.triggerAgentId)?.name
+    : undefined
+  const baseAgentLabel = eventNeedsTrigger
+    ? formatAnomalyFormulaAgentLabel('anomalyPower', tAgent?.name)
+    : formatAnomalyFormulaAgentLabel('owner', ownerAgent?.name)
+  const bonusAgentLabel = usesTriggerBonus
+    ? formatAnomalyFormulaAgentLabel('trigger', triggerName ?? ownerAgent?.name)
+    : formatAnomalyFormulaAgentLabel('owner', ownerAgent?.name)
+  const mutationAgentLabel =
+    remielName && result.mutationZone > 1
+      ? formatAnomalyFormulaAgentLabel('mutation', remielName)
+      : undefined
+
+  let remielSelfAtkSourceItems: string[] | undefined
+  let remielSelfMasterySourceItems: string[] | undefined
+  let remielSelfExternalPanel: PanelStats | undefined
+  let remielSelfSources: OptimalPanelBreakdown['sources'] | undefined
+  let remielSelfFinalPanel: PanelStats | undefined
+  if (result.remielSelfRadianceActive && remiel) {
+    const remielExternal = resolveExternalForAgent(ctx, remiel.id, remiel.slotIndex, mainExternal)
+    const remielCtx = buildPanelContextForSlot(ctx, remiel.slotIndex, remielExternal, mainExternal)
+    const restricted = collectRemielSelfRestrictedContributions(
+      remielExternal,
+      { ...remielCtx, skillContext: skillCtx },
+      remiel.slotIndex,
+    )
+    const selfBreakdown = computeRemielSelfInCombatPanel(
+      remielExternal,
+      remielCtx,
+      remiel.slotIndex,
+    )
+    remielSelfAtkSourceItems = restricted.atkItems
+    remielSelfMasterySourceItems = restricted.masteryItems
+    remielSelfExternalPanel = remielExternal
+    remielSelfSources = selfBreakdown.sources
+    remielSelfFinalPanel = selfBreakdown.finalPanel
+  }
 
   return {
-    event,
-    eventId: event.id,
+    hit,
+    eventId: hit.id,
     displayName,
-    kind: event.kind,
+    kind: damageType,
     perHit,
     total,
     usesNonMainProducer,
     mainlyProducerDriven,
     result,
     finalPanel: evtFinalPanel,
-    external: mainExternal,
+    // 过程明细的「局外面板」必须是招式持有者，不能误用主 C（最优词条）面板
+    external: ownerExternal,
     breakdown: evtBreakdown,
     piercePower: evtPierce,
     anomalySubKind,
-    producerFinalPanel: usesNonMainProducer ? evtTriggerFinalPanel : undefined,
+    // 只要有异常强度提供者，就带上其面板与名字，避免回落到主 C（如蕾米埃尔）面板
+    producerFinalPanel: evtTriggerFinalPanel,
     producerExternalPanel,
     producerBreakdown,
-    producerAgentLabel: usesNonMainProducer ? tAgent?.name : undefined,
+    producerAgentLabel: eventNeedsTrigger
+      ? formatAnomalyFormulaAgentLabel('anomalyPower', tAgent?.name)
+      : undefined,
+    bonusFinalPanel,
+    bonusExternalPanel: bonusExternalForTips,
+    bonusBreakdown: bonusBreakdownForTips,
+    defenseTriggerFinalPanel: eventNeedsTrigger ? anomalyTriggerPanel : undefined,
+    defenseTriggerExternalPanel: eventNeedsTrigger ? bonusExternalPanel : undefined,
+    defenseTriggerBreakdown: eventNeedsTrigger ? bonusBreakdown : undefined,
+    defenseTriggerAgentLabel: eventNeedsTrigger
+      ? formatAnomalyFormulaAgentLabel('trigger', triggerName ?? ownerAgent?.name)
+      : undefined,
     baseAgentLabel,
-    bonusAgentLabel: ownerAgent?.name,
-    mutationAgentLabel: remielName && result.mutationZone > 1 ? remielName : undefined,
+    bonusAgentLabel,
+    mutationAgentLabel,
+    mutationFinalPanel: luminousMods.finalPanel,
+    mutationExternalPanel: luminousMods.external,
+    mutationSources: luminousMods.sources,
+    remielSelfAtkSourceItems,
+    remielSelfMasterySourceItems,
+    remielSelfExternalPanel,
+    remielSelfSources,
+    remielSelfFinalPanel,
+    remielIsMb: luminousMods.remielIsMb,
   }
 }
 
 function evaluateOptimalDamageEvent(
   ctx: OptimalEvalContext,
   mainExternal: PanelStats,
-  event: DamageEvent,
+  hit: ResolvedHit,
 ): OptimalEventDamageLine | null {
-  const detail = evaluateOptimalEventDetail(ctx, mainExternal, event)
+  const detail = evaluateOptimalEventDetail(ctx, mainExternal, hit)
   if (!detail) return null
   return {
     eventId: detail.eventId,
@@ -935,8 +1138,8 @@ function computeEventDamageLines(
   firstResult: DamageCalcResult | null
   firstBreakdown: OptimalPanelBreakdown | null
 } {
-  const events = ctx.damageEvents ?? []
-  if (!events.length) {
+  const hits = ctx.hits ?? []
+  if (!hits.length) {
     return { grandTotal: 0, eventLines: [], firstResult: null, firstBreakdown: null }
   }
 
@@ -945,8 +1148,8 @@ function computeEventDamageLines(
   let firstResult: DamageCalcResult | null = null
   let firstBreakdown: OptimalPanelBreakdown | null = null
 
-  for (const event of events) {
-    const line = evaluateOptimalDamageEvent(ctx, external, event)
+  for (const hit of hits) {
+    const line = evaluateOptimalDamageEvent(ctx, external, hit)
     if (!line) continue
     eventLines.push(line)
     grandTotal += line.total
@@ -966,8 +1169,18 @@ function computeEventDamageLines(
         isMbMainAgent: ctx.isMb,
         enemyInput: ctx.enemyInput,
         combatVulnerable: firstBreakdown.combatMods.vulnerable,
+        combatDirectVulnerable: firstBreakdown.combatMods.directVulnerable,
+        combatAnomalyVulnerable: firstBreakdown.combatMods.anomalyVulnerable,
+        combatDmgReduction: firstBreakdown.combatMods.dmgReduction,
+        combatDirectDmgReduction: firstBreakdown.combatMods.directDmgReduction,
+        combatAnomalyDmgReduction: firstBreakdown.combatMods.anomalyDmgReduction,
+        combatGlobalStaggerVulnerable: firstBreakdown.combatMods.globalStaggerVulnerable,
         combatStaggerVulnerable: firstBreakdown.combatMods.staggerVulnerable,
+        combatStaggerVulnerableOnly: firstBreakdown.combatMods.staggerVulnerableOnly,
         combatSpecial: firstBreakdown.combatMods.special,
+        combatPierceDmgBonus: firstBreakdown.combatMods.pierceDmgBonus,
+        combatSharpenCritDmgBonus: firstBreakdown.combatMods.sharpenCritDmgBonus,
+        combatDmgPenalty: firstBreakdown.combatMods.dmgPenalty,
         mainAgentElement: ctx.mainAgentElement,
         ...resolveDamageCalcResistanceElements(
           ctx.panelContext.teamSlots,
@@ -988,13 +1201,13 @@ function computeEventDamageLinesForSweep(
   ctx: OptimalEvalContext,
   external: PanelStats,
 ): { grandTotal: number; eventLines: OptimalEventDamageLine[] } {
-  const events = ctx.damageEvents ?? []
-  if (!events.length) return { grandTotal: 0, eventLines: [] }
+  const hits = ctx.hits ?? []
+  if (!hits.length) return { grandTotal: 0, eventLines: [] }
 
   let grandTotal = 0
   const eventLines: OptimalEventDamageLine[] = []
-  for (const event of events) {
-    const line = evaluateOptimalDamageEvent(ctx, external, event)
+  for (const hit of hits) {
+    const line = evaluateOptimalDamageEvent(ctx, external, hit)
     if (!line) continue
     eventLines.push(line)
     grandTotal += line.total
@@ -1028,7 +1241,7 @@ export function evaluateAffixCountsForSweep(
   })
 
   let payload: { grandTotal: number; eventLines: OptimalEventDamageLine[] }
-  if (ctx.damageEvents?.length) {
+  if (ctx.hits?.length) {
     payload = computeEventDamageLinesForSweep(ctx, external)
   } else {
     const breakdown = computeFinalPanel(external, {
@@ -1047,8 +1260,18 @@ export function evaluateAffixCountsForSweep(
       isMbMainAgent: ctx.isMb,
       enemyInput: ctx.enemyInput,
       combatVulnerable: breakdown.combatMods.vulnerable,
+      combatDirectVulnerable: breakdown.combatMods.directVulnerable,
+      combatAnomalyVulnerable: breakdown.combatMods.anomalyVulnerable,
+      combatDmgReduction: breakdown.combatMods.dmgReduction,
+      combatDirectDmgReduction: breakdown.combatMods.directDmgReduction,
+      combatAnomalyDmgReduction: breakdown.combatMods.anomalyDmgReduction,
+      combatGlobalStaggerVulnerable: breakdown.combatMods.globalStaggerVulnerable,
       combatStaggerVulnerable: breakdown.combatMods.staggerVulnerable,
+      combatStaggerVulnerableOnly: breakdown.combatMods.staggerVulnerableOnly,
       combatSpecial: breakdown.combatMods.special,
+      combatPierceDmgBonus: breakdown.combatMods.pierceDmgBonus,
+      combatSharpenCritDmgBonus: breakdown.combatMods.sharpenCritDmgBonus,
+      combatDmgPenalty: breakdown.combatMods.dmgPenalty,
       mainAgentElement: ctx.mainAgentElement,
       ...resolveDamageCalcResistanceElements(
         ctx.panelContext.teamSlots,
@@ -1117,8 +1340,14 @@ function serializeMultiSlotBuffSelection(
 
 function affixEvalContextSignature(ctx: OptimalEvalContext): string {
   const events =
-    ctx.damageEvents
-      ?.map((event) => `${event.id}:${event.kind}:${event.count}:${event.critMode}:${event.triggerAgentId ?? ''}`)
+    ctx.hits
+      ?.map(
+        (hit) =>
+          `${hit.id}:${hit.skill.id}:${hit.count}:${hit.critMode}:${hit.staggerPhase}` +
+          `:${hit.anomalyPowerAgentId ?? ''}:${hit.triggerAgentId ?? ''}` +
+          `:${JSON.stringify(hit.multOverrides ?? {})}` +
+          `:${JSON.stringify(hit.panelMods ?? {})}`,
+      )
       .join(';') ?? ''
   return [
     ctx.mainAgentId ?? '',
@@ -1127,6 +1356,8 @@ function affixEvalContextSignature(ctx: OptimalEvalContext): string {
     ctx.wengineBaseAtk ?? 0,
     ctx.baseDamageSource ?? '',
     JSON.stringify(ctx.driveDiscMainStats),
+    // 主词条组合试算会改 2/4 件套；缺失会导致同词条数命中旧缓存，伤害不变
+    JSON.stringify(ctx.driveDiscSelection),
     JSON.stringify(ctx.enemyInput),
     JSON.stringify(ctx.panelContext.skillContext),
     JSON.stringify(ctx.extraGains ?? []),
@@ -1175,7 +1406,7 @@ function evaluateAffixCountsUncached(
     driveDiscs: ctx.driveDiscs,
   })
 
-  if (ctx.damageEvents?.length) {
+  if (ctx.hits?.length) {
     const { grandTotal, eventLines, firstResult, firstBreakdown } = computeEventDamageLines(
       ctx,
       external,
@@ -1200,8 +1431,18 @@ function evaluateAffixCountsUncached(
         isMbMainAgent: ctx.isMb,
         enemyInput: ctx.enemyInput,
         combatVulnerable: breakdown.combatMods.vulnerable,
+        combatDirectVulnerable: breakdown.combatMods.directVulnerable,
+        combatAnomalyVulnerable: breakdown.combatMods.anomalyVulnerable,
+        combatDmgReduction: breakdown.combatMods.dmgReduction,
+        combatDirectDmgReduction: breakdown.combatMods.directDmgReduction,
+        combatAnomalyDmgReduction: breakdown.combatMods.anomalyDmgReduction,
+        combatGlobalStaggerVulnerable: breakdown.combatMods.globalStaggerVulnerable,
         combatStaggerVulnerable: breakdown.combatMods.staggerVulnerable,
+        combatStaggerVulnerableOnly: breakdown.combatMods.staggerVulnerableOnly,
         combatSpecial: breakdown.combatMods.special,
+        combatPierceDmgBonus: breakdown.combatMods.pierceDmgBonus,
+      combatSharpenCritDmgBonus: breakdown.combatMods.sharpenCritDmgBonus,
+      combatDmgPenalty: breakdown.combatMods.dmgPenalty,
         mainAgentElement: ctx.mainAgentElement,
         ...resolveDamageCalcResistanceElements(
           ctx.panelContext.teamSlots,
@@ -1241,8 +1482,18 @@ function evaluateAffixCountsUncached(
     isMbMainAgent: ctx.isMb,
     enemyInput: ctx.enemyInput,
     combatVulnerable: breakdown.combatMods.vulnerable,
+    combatDirectVulnerable: breakdown.combatMods.directVulnerable,
+    combatAnomalyVulnerable: breakdown.combatMods.anomalyVulnerable,
+    combatDmgReduction: breakdown.combatMods.dmgReduction,
+    combatDirectDmgReduction: breakdown.combatMods.directDmgReduction,
+    combatAnomalyDmgReduction: breakdown.combatMods.anomalyDmgReduction,
+    combatGlobalStaggerVulnerable: breakdown.combatMods.globalStaggerVulnerable,
     combatStaggerVulnerable: breakdown.combatMods.staggerVulnerable,
+    combatStaggerVulnerableOnly: breakdown.combatMods.staggerVulnerableOnly,
     combatSpecial: breakdown.combatMods.special,
+    combatPierceDmgBonus: breakdown.combatMods.pierceDmgBonus,
+    combatSharpenCritDmgBonus: breakdown.combatMods.sharpenCritDmgBonus,
+    combatDmgPenalty: breakdown.combatMods.dmgPenalty,
     mainAgentElement: ctx.mainAgentElement,
     ...resolveDamageCalcResistanceElements(
       ctx.panelContext.teamSlots,
@@ -1294,7 +1545,7 @@ export function evaluateAffixCounts(
   return result
 }
 
-/** 使局内暴击率刚好 > 100% 的最小暴击条数 */
+/** 使局内暴击率刚好 > 100% 的最小暴击条数（只算面板，不算事件） */
 export function findMinCritRollsForOvercap(
   ctx: OptimalEvalContext,
   baseState: Omit<DirectAllocState, 'critRate' | 'totalRolls'>,
@@ -1302,6 +1553,7 @@ export function findMinCritRollsForOvercap(
 ): number {
   const critCap = affixRollCap(ctx.driveDiscMainStats, 'critRate')
   const limit = Math.min(maxSearch, Number.isFinite(critCap) ? critCap : maxSearch)
+  const panelOnlyCtx: OptimalEvalContext = { ...ctx, hits: undefined }
   for (let n = 0; n <= limit; n += 1) {
     const counts = buildDirectAffixCounts(
       ctx.isMb,
@@ -1309,7 +1561,7 @@ export function findMinCritRollsForOvercap(
       0,
       0,
     )
-    const { finalPanel } = evaluateAffixCounts(ctx, counts)
+    const { finalPanel } = evaluateAffixCounts(panelOnlyCtx, counts)
     if (finalPanel.critRate > 100) return n
   }
   return limit
@@ -1379,6 +1631,100 @@ export function sweepDirectDamage(
   return points
 }
 
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve())
+    } else {
+      setTimeout(resolve, 0)
+    }
+  })
+}
+
+export type SweepAsyncOptions = {
+  chunkSize?: number
+  signal?: AbortSignal
+}
+
+/** 分片扫掠直伤，避免长循环卡住主线程 */
+export async function sweepDirectDamageAsync(
+  ctx: OptimalEvalContext,
+  state: DirectAllocState,
+  options?: SweepAsyncOptions,
+): Promise<DirectSweepPoint[]> {
+  const chunkSize = Math.max(1, options?.chunkSize ?? 6)
+  const signal = options?.signal
+  const crit = clampInt(state.critRate, 0, DIRECT_CONSTRAINTS.maxTotalRolls)
+  const total = clampInt(state.totalRolls, crit, DIRECT_CONSTRAINTS.maxTotalRolls)
+  const caps = getAffixRollCaps(ctx.driveDiscMainStats)
+  const points: DirectSweepPoint[] = []
+  let sinceYield = 0
+
+  const pushPoint = async (point: DirectSweepPoint) => {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    points.push(point)
+    sinceYield += 1
+    if (sinceYield >= chunkSize) {
+      sinceYield = 0
+      await yieldToMain()
+    }
+  }
+
+  if (ctx.isMb) {
+    const fixedAtkPercent = clampInt(state.atkPercent, 0, 99)
+    const remain = total - crit - fixedAtkPercent
+    if (remain < 0 || fixedAtkPercent > caps.atkPercent || crit > caps.critRate) return points
+    for (let hpPercent = 0; hpPercent <= remain; hpPercent += 1) {
+      const critDmg = remain - hpPercent
+      if (hpPercent > caps.hpPercent || critDmg > caps.critDmg) continue
+      const affixCounts = buildDirectAffixCounts(
+        true,
+        { ...state, critRate: crit, totalRolls: total },
+        hpPercent,
+        critDmg,
+      )
+      const swept = evaluateAffixCountsForSweep(ctx, affixCounts)
+      await pushPoint({
+        outPercent: hpPercent,
+        critDmg,
+        label: `局外大生命${hpPercent}/爆伤${critDmg}`,
+        affixCounts,
+        evalSnapshot: null,
+        directExpected: swept.grandTotal,
+        eventLines: swept.eventLines,
+        grandTotal: swept.grandTotal,
+      })
+    }
+    return points
+  }
+
+  const remain = total - crit
+  const outLabel = outPercentLabel(false)
+  const outCap = caps.atkPercent
+  for (let outPercent = 0; outPercent <= remain; outPercent += 1) {
+    const critDmg = remain - outPercent
+    if (outPercent > outCap || critDmg > caps.critDmg || crit > caps.critRate) continue
+    const affixCounts = buildDirectAffixCounts(
+      false,
+      { ...state, critRate: crit, totalRolls: total },
+      outPercent,
+      critDmg,
+    )
+    const swept = evaluateAffixCountsForSweep(ctx, affixCounts)
+    await pushPoint({
+      outPercent,
+      critDmg,
+      label: `${outLabel}${outPercent}/爆伤${critDmg}`,
+      affixCounts,
+      evalSnapshot: null,
+      directExpected: swept.grandTotal,
+      eventLines: swept.eventLines,
+      grandTotal: swept.grandTotal,
+    })
+  }
+  return points
+}
+
 export function sweepAnomalyDamage(
   ctx: OptimalEvalContext,
   state: AnomalyAllocState,
@@ -1408,6 +1754,68 @@ export function sweepAnomalyDamage(
       eventLines: evaled.eventLines,
       grandTotal: evaled.grandTotal,
     })
+  }
+  return points
+}
+
+/** 分片扫掠异常，避免长循环卡住主线程 */
+export async function sweepAnomalyDamageAsync(
+  ctx: OptimalEvalContext,
+  state: AnomalyAllocState,
+  options?: SweepAsyncOptions,
+): Promise<AnomalySweepPoint[]> {
+  const chunkSize = Math.max(1, options?.chunkSize ?? 6)
+  const signal = options?.signal
+  const total = clampInt(state.totalRolls, 0, ANOMALY_CONSTRAINTS.maxTotalRolls)
+  const outLabel = outPercentLabel(ctx.isMb)
+  const caps = getAffixRollCaps(ctx.driveDiscMainStats)
+  const outCap = ctx.isMb ? caps.hpPercent : caps.atkPercent
+  const points: AnomalySweepPoint[] = []
+  let sinceYield = 0
+
+  for (let outPercent = 0; outPercent <= total; outPercent += 1) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    const mastery = total - outPercent
+    if (outPercent > outCap || mastery > caps.mastery) continue
+    const affixCounts = buildAnomalyAffixCounts(ctx.isMb, { ...state, totalRolls: total }, outPercent, mastery)
+    if (ctx.hits?.length) {
+      const swept = evaluateAffixCountsForSweep(ctx, affixCounts)
+      points.push({
+        outPercent,
+        mastery,
+        label: `${outLabel}${outPercent}/精通${mastery}`,
+        affixCounts,
+        evalSnapshot: null,
+        anomalyExpected: swept.grandTotal,
+        disorderExpected: swept.grandTotal,
+        turbulenceExpected: swept.grandTotal,
+        anomalyReleaseExpected: swept.grandTotal,
+        radianceExpected: swept.grandTotal,
+        eventLines: swept.eventLines,
+        grandTotal: swept.grandTotal,
+      })
+    } else {
+      const evaled = evaluateAffixCounts(ctx, affixCounts)
+      points.push({
+        outPercent,
+        mastery,
+        label: `${outLabel}${outPercent}/精通${mastery}`,
+        affixCounts,
+        evalSnapshot: null,
+        anomalyExpected: evaled.result.anomalyExpected,
+        disorderExpected: evaled.result.disorderExpected,
+        turbulenceExpected: evaled.result.turbulenceExpected,
+        anomalyReleaseExpected: evaled.result.anomalyReleaseExpected,
+        radianceExpected: evaled.result.radianceExpected,
+        eventLines: evaled.eventLines,
+        grandTotal: evaled.grandTotal,
+      })
+    }
+    sinceYield += 1
+    if (sinceYield >= chunkSize) {
+      sinceYield = 0
+      await yieldToMain()
+    }
   }
   return points
 }
@@ -1446,11 +1854,14 @@ function resolveEvalMetricDamage(
   return damageMetric(evaled.result, kind, anomalyMetric, evaled.grandTotal)
 }
 
-export function directCandidateKeys(isMb: boolean): OptimalAffixKey[] {
+export function directCandidateKeys(isMb: boolean, isFengYu = false): OptimalAffixKey[] {
   if (isMb) {
-    return ['atkFlat', 'hpFlat', 'hpPercent', 'atkPercent', 'pen', 'critRate', 'critDmg']
+    return ['atkFlat', 'hpFlat', 'hpPercent', 'atkPercent', 'pen', 'mastery', 'critRate', 'critDmg']
   }
-  return ['atkFlat', 'atkPercent', 'pen', 'critRate', 'critDmg']
+  if (isFengYu) {
+    return ['defFlat', 'defPercent', 'pen', 'critRate', 'critDmg']
+  }
+  return ['atkFlat', 'atkPercent', 'pen', 'mastery', 'critRate', 'critDmg']
 }
 
 export function anomalyCandidateKeys(isMb: boolean): OptimalAffixKey[] {
@@ -1474,6 +1885,30 @@ function bumpAffix(counts: AffixCounts, key: OptimalAffixKey, delta: number): Af
   return next
 }
 
+function resolveSweepMetricDamage(
+  evaled: { grandTotal: number; eventLines: OptimalEventDamageLine[] },
+  selectedEventIds?: string[] | null,
+): number {
+  if (selectedEventIds?.length && evaled.eventLines.length) {
+    const ids = new Set(selectedEventIds)
+    return evaled.eventLines
+      .filter((line) => ids.has(line.eventId))
+      .reduce((sum, line) => sum + line.total, 0)
+  }
+  return evaled.grandTotal
+}
+
+/** 差异/曲线用：有事件走轻量扫掠口径；无事件仍走完整评估（要分子类伤害） */
+function evaluateAffixForDiffMetric(ctx: OptimalEvalContext, affixCounts: AffixCounts) {
+  if (ctx.hits?.length) return evaluateAffixCountsForSweep(ctx, affixCounts)
+  const full = evaluateAffixCounts(ctx, affixCounts)
+  return {
+    grandTotal: full.grandTotal,
+    eventLines: full.eventLines,
+    result: full.result,
+  }
+}
+
 export function computeDiffAnalysis(
   ctx: OptimalEvalContext,
   baseCounts: AffixCounts,
@@ -1482,9 +1917,34 @@ export function computeDiffAnalysis(
   selectedEventIds?: string[] | null,
 ): { addOne: AffixDiffRow[]; replace: AffixReplaceRow[] } {
   const candidates = kind === 'direct' ? directCandidateKeys(ctx.isMb) : anomalyCandidateKeys(ctx.isMb)
-  const base = evaluateAffixCounts(ctx, baseCounts)
-  const baseDmg = resolveEvalMetricDamage(base, kind, anomalyMetric, selectedEventIds)
+  const base = evaluateAffixForDiffMetric(ctx, baseCounts)
+  const baseDmg = ctx.hits?.length
+    ? resolveSweepMetricDamage(base, selectedEventIds)
+    : resolveEvalMetricDamage(
+        base as {
+          result: DamageCalcResult
+          grandTotal: number
+          eventLines: OptimalEventDamageLine[]
+        },
+        kind,
+        anomalyMetric,
+        selectedEventIds,
+      )
   const mainStats = ctx.driveDiscMainStats
+
+  const metricOf = (evaled: ReturnType<typeof evaluateAffixForDiffMetric>) =>
+    ctx.hits?.length
+      ? resolveSweepMetricDamage(evaled, selectedEventIds)
+      : resolveEvalMetricDamage(
+          evaled as {
+            result: DamageCalcResult
+            grandTotal: number
+            eventLines: OptimalEventDamageLine[]
+          },
+          kind,
+          anomalyMetric,
+          selectedEventIds,
+        )
 
   const addOne: AffixDiffRow[] = candidates.map((key) => {
     const nextCount = (baseCounts[key] ?? 0) + 1
@@ -1497,11 +1957,13 @@ export function computeDiffAnalysis(
         addOne: AFFIX_VALUE_PER_COUNT[key],
         damageDelta: 0,
         percentDelta: 0,
+        capped: true,
+        note: affixCapLimitNote(mainStats, key, baseCounts[key] ?? 0),
       }
     }
     const bumped = bumpAffix(baseCounts, key, 1)
-    const next = evaluateAffixCounts(ctx, bumped)
-    const nextDmg = resolveEvalMetricDamage(next, kind, anomalyMetric, selectedEventIds)
+    const next = evaluateAffixForDiffMetric(ctx, bumped)
+    const nextDmg = metricOf(next)
     const delta = nextDmg - baseDmg
     return {
       key,
@@ -1515,14 +1977,13 @@ export function computeDiffAnalysis(
   })
 
   addOne.sort((a, b) => b.damageDelta - a.damageDelta)
-  const best = addOne.find((row) => !exceedsAffixCap(mainStats, row.key, (baseCounts[row.key] ?? 0) + 1)) ?? addOne[0]
 
   const ownedKeys = candidates.filter((key) => (baseCounts[key] ?? 0) > 0)
   const replace: AffixReplaceRow[] = ownedKeys.map((key) => {
     const without = bumpAffix(baseCounts, key, -1)
-    let bestReplaceKey = best?.key ?? key
+    let bestReplaceKey = key
     let bestDelta = -Infinity
-    let bestAdd = AFFIX_VALUE_PER_COUNT[bestReplaceKey]
+    let bestAdd = 0
     let found = false
 
     for (const cand of candidates) {
@@ -1530,8 +1991,8 @@ export function computeDiffAnalysis(
       const nextCount = (without[cand] ?? 0) + 1
       if (exceedsAffixCap(mainStats, cand, nextCount)) continue
       const swapped = bumpAffix(without, cand, 1)
-      const evaled = evaluateAffixCounts(ctx, swapped)
-      const dmg = resolveEvalMetricDamage(evaled, kind, anomalyMetric, selectedEventIds)
+      const evaled = evaluateAffixForDiffMetric(ctx, swapped)
+      const dmg = metricOf(evaled)
       const delta = dmg - baseDmg
       if (delta > bestDelta) {
         bestDelta = delta
@@ -1551,6 +2012,8 @@ export function computeDiffAnalysis(
         addOne: 0,
         damageDelta: 0,
         percentDelta: 0,
+        capped: true,
+        note: '可替换目标均已达主词条约束上限',
       }
     }
 
@@ -1579,23 +2042,23 @@ function eventAffixImpactReason(
       findLuminousAgentInTeam(ctx.panelContext.teamSlots, ctx.panelContext.agents),
     )
     if (teamHasRemiel) {
-      return `主C副词条变化可影响该事件（含蕾米埃尔攻击转模等全队增益，最大变化 ${maxDelta.toFixed(2)}）`
+      return `编辑中角色副词条变化可影响该事件（含蕾米埃尔攻击转模等全队增益，最大变化 ${maxDelta.toFixed(2)}）`
     }
-    return `主C副词条变化可影响该事件（最大变化 ${maxDelta.toFixed(2)}）`
+    return `编辑中角色副词条变化可影响该事件（最大变化 ${maxDelta.toFixed(2)}）`
   }
   if (line.kind === 'anomalyRelease' && line.total <= AFFIX_IMPACT_EPS) {
     return '异放倍率为 0 或未配置产生角色，当前无法计算异放伤害'
   }
-  return '不受主C副词条变化影响'
+  return '不受编辑中角色副词条变化影响'
 }
 
-/** 各伤害事件对主C副词条变化的敏感度 */
+/** 各伤害事件对编辑中角色副词条变化的敏感度 */
 export function computeEventAffixImpact(
   ctx: OptimalEvalContext,
   baseCounts: AffixCounts,
   kind: OptimalDamageKind,
 ): OptimalEventAffixImpact[] {
-  if (!ctx.damageEvents?.length) return []
+  if (!ctx.hits?.length) return []
   const base = evaluateAffixCounts(ctx, baseCounts)
   const baseById = new Map(base.eventLines.map((line) => [line.eventId, line.total]))
   const candidates = kind === 'direct' ? directCandidateKeys(ctx.isMb) : anomalyCandidateKeys(ctx.isMb)
@@ -1634,13 +2097,27 @@ export function computeBenefitCurves(
   selectedEventIds?: string[] | null,
 ): { series: BenefitCurveSeries[]; nextStep: AffixDiffRow[] } {
   const candidates = kind === 'direct' ? directCandidateKeys(ctx.isMb) : anomalyCandidateKeys(ctx.isMb)
-  const base = evaluateAffixCounts(ctx, baseCounts)
-  const baseDmg = resolveEvalMetricDamage(base, kind, anomalyMetric, selectedEventIds)
+  const metricOf = (evaled: ReturnType<typeof evaluateAffixForDiffMetric>) =>
+    ctx.hits?.length
+      ? resolveSweepMetricDamage(evaled, selectedEventIds)
+      : resolveEvalMetricDamage(
+          evaled as {
+            result: DamageCalcResult
+            grandTotal: number
+            eventLines: OptimalEventDamageLine[]
+          },
+          kind,
+          anomalyMetric,
+          selectedEventIds,
+        )
+  const base = evaluateAffixForDiffMetric(ctx, baseCounts)
+  const baseDmg = metricOf(base)
   const mainStats = ctx.driveDiscMainStats
 
   const series: BenefitCurveSeries[] = candidates.map((key) => {
     const cumulativePercent = [0]
     const marginalPercent = [0]
+    const cappedAt = [false]
     let counts = { ...baseCounts }
     let prevDmg = baseDmg
     let capped = false
@@ -1651,15 +2128,17 @@ export function computeBenefitCurves(
         capped = true
         cumulativePercent.push(lastCum)
         marginalPercent.push(0)
+        cappedAt.push(true)
         continue
       }
       counts = bumpAffix(counts, key, 1)
-      const evaled = evaluateAffixCounts(ctx, counts)
-      const dmg = resolveEvalMetricDamage(evaled, kind, anomalyMetric, selectedEventIds)
+      const evaled = evaluateAffixForDiffMetric(ctx, counts)
+      const dmg = metricOf(evaled)
       const cum = baseDmg > 0 ? ((dmg - baseDmg) / baseDmg) * 100 : 0
       const mar = prevDmg > 0 ? ((dmg - prevDmg) / prevDmg) * 100 : 0
       cumulativePercent.push(cum)
       marginalPercent.push(mar)
+      cappedAt.push(false)
       prevDmg = dmg
       lastCum = cum
     }
@@ -1670,6 +2149,7 @@ export function computeBenefitCurves(
       color: SERIES_COLORS[key] ?? '#9aa3b0',
       cumulativePercent,
       marginalPercent,
+      cappedAt,
     }
   })
 
@@ -1696,7 +2176,8 @@ export function buildOptimalEvalContext(input: {
   slotBuffSelections?: MultiSlotBuffSelection | null
   anomalySlotPanels?: Record<string, PanelStats>
   convertSlotPanels?: import('@/utils/panelBuffCalc').ConvertSlotPanels
-  damageEvents?: DamageEvent[]
+  hits?: ResolvedHit[]
+  /** 页级异常强度提供者 id（命名含 trigger，实为 power） */
   triggerAnomalyAgentId?: string | null
   resolveSubcategory?: (id: string | null) => SkillSubcategory | null
   skillSubcategories?: SkillSubcategory[]
@@ -1728,21 +2209,56 @@ export function buildOptimalEvalContext(input: {
       bangboo: input.bangboo,
       bangbooRefine: input.bangbooRefine,
       mainSlotIndex: input.mainSlotIndex,
+      liveExternalSlotIndex: input.mainSlotIndex,
       driveDiscs: input.driveDiscs,
       skillContext: input.skillContext,
       buffSelection: input.buffSelection,
       anomalySlotPanels: input.anomalySlotPanels,
       convertSlotPanels: input.convertSlotPanels,
+      slotExternalPanels: Object.fromEntries(
+        input.teamSlots.flatMap((slot, index) => {
+          if (!slot.agentId) return []
+          // 主 C：由最优词条扫掠推导；队友：优先用手填局外，避免盖掉「导入」录入
+          if (index !== input.mainSlotIndex) {
+            const saved = input.anomalySlotPanels?.[slot.agentId]
+            if (saved && !isPlaceholderExternalPanel(saved)) {
+              return [[index, fillPanelStatsDefaults(saved)]]
+            }
+          }
+          return [
+            [
+              index,
+              computeExternalPanelFromTeamSlot({
+                slot,
+                agents: input.agents,
+                wengines: input.wengines,
+                driveDiscs: input.driveDiscs,
+                overrideAffix:
+                  index === input.mainSlotIndex
+                    ? {
+                        affixCounts: {
+                          ...createEmptyAffixCounts(),
+                          ...slot.affixCounts,
+                        },
+                        affixDriveDiscMainStats: input.driveDiscMainStats,
+                      }
+                    : undefined,
+              }),
+            ],
+          ]
+        }),
+      ),
       baseAnomalyControl: mainAgent?.basePanel.anomalyControl ?? 0,
       baseEnergyRegen: mainAgent?.basePanel.energyRegen ?? 0,
       environmentBuffs: input.environmentBuffs,
+      extraGains: input.extraGains,
     },
     enemyInput: input.enemyInput,
     baseDamageSource: input.baseDamageSource,
     mainAgentElement: mainAgent?.element ?? '',
     mainAgentId: mainAgent?.id ?? '',
     mainAgentName: mainAgent?.name ?? '',
-    damageEvents: input.damageEvents,
+    hits: input.hits,
     extraGains: input.extraGains,
     triggerAnomalyAgentId: input.triggerAnomalyAgentId,
     slotBuffSelections: input.slotBuffSelections,

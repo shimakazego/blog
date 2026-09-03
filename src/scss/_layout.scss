@@ -4,7 +4,18 @@ html {
 }
 
 body {
-    background-color: $dark;
+    background-color: var(--blog-body-bg);
+}
+
+/** ----------- APP LAYOUT / FOOTER STICKY ------------ **/
+#app {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+#app > .foxy-footer {
+    margin-top: auto;
 }
 
 /** ----------- SELECTION ------------- **/

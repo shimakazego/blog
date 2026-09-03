@@ -4,9 +4,7 @@ import type {
   BuffScope,
   BuffSkillTarget,
   BuffStatModifiers,
-  DamageEvent,
   SkillCalcContext,
-  SkillSubcategory,
   StaggerPhase,
 } from '@/types/calculator'
 import type { ExtraBuffGain } from '@/components/calculator/ExtraBuffGainEditor.vue'
@@ -14,16 +12,68 @@ import {
   countTeamProfession,
   effectMatchesContext,
   effectMatchesTeamProfessionGate,
-  resolveIsFollowUp,
 } from '@/utils/buffEffect'
-import { mapEventKindToCalc } from '@/utils/damageEvent'
-import { resolveEventOwnerAgentId } from '@/utils/damageEventOwner'
 import { createEmptyBuffStatModifiers, mergeBuffStatModifiers } from '@/utils/calculatorUi'
+import { teamSlotDisplayLabel } from '@/utils/teamSlotLabel'
+
+export type { ExtraBuffGain }
+
+export type ExtraBuffApplySlot = number | 'team'
+
+/**
+ * 额外 Buff 作用对象：全队，或固定槽位 0/1/2。
+ * 旧数据 `applyTarget: 'self'`（跟编辑中角色走）视为角色1，避免切编辑者带动流程伤害。
+ */
+export function resolveExtraGainApplySlot(
+  gain: Pick<ExtraBuffGain, 'applySlot' | 'applyTarget'>,
+): ExtraBuffApplySlot {
+  if (gain.applySlot === 'team' || gain.applyTarget === 'team') return 'team'
+  if (
+    typeof gain.applySlot === 'number' &&
+    Number.isInteger(gain.applySlot) &&
+    gain.applySlot >= 0 &&
+    gain.applySlot <= 2
+  ) {
+    return gain.applySlot
+  }
+  return 0
+}
+
+export function extraGainAppliesToSlot(
+  gain: Pick<ExtraBuffGain, 'applySlot' | 'applyTarget'>,
+  slotIndex: number,
+): boolean {
+  const applySlot = resolveExtraGainApplySlot(gain)
+  return applySlot === 'team' || applySlot === slotIndex
+}
+
+export function normalizeExtraGain<T extends ExtraBuffGain>(gain: T): T {
+  const applySlot = resolveExtraGainApplySlot(gain)
+  return {
+    ...gain,
+    applySlot,
+    applyTarget: applySlot === 'team' ? 'team' : 'self',
+  }
+}
+
+export function extraGainApplySlotLabel(
+  gain: Pick<ExtraBuffGain, 'applySlot' | 'applyTarget'>,
+  teamSlots: Array<{ agentId?: string | null }>,
+  agents: Array<{ id: string; name: string }>,
+): string {
+  const applySlot = resolveExtraGainApplySlot(gain)
+  if (applySlot === 'team') return '全队'
+  const slot = teamSlots[applySlot]
+  if (!slot) return `角色${applySlot + 1}`
+  return teamSlotDisplayLabel(slot, applySlot, agents)
+}
+
 export function extraGainToEffect(gain: ExtraBuffGain): BuffEffect {
+  const applySlot = resolveExtraGainApplySlot(gain)
   return {
     id: gain.id,
     scope: gain.scope ?? 'general',
-    applyTarget: gain.applyTarget ?? 'self',
+    applyTarget: applySlot === 'team' ? 'team' : 'self',
     applySituation: gain.applySituation ?? 'global',
     applyProfession: gain.applyProfession ?? null,
     teamProfession: gain.teamProfession ?? null,
@@ -36,40 +86,6 @@ export function extraGainToEffect(gain: ExtraBuffGain): BuffEffect {
     kind: 'fixed',
     stat: gain.stat,
     value: gain.value,
-  }
-}
-
-export function buildSkillContextFromDamageEvent(
-  event: DamageEvent,
-  options: {
-    ownerAgentId: string
-    agents: Array<{ id: string; element?: string | null }>
-    skillSubcategories: SkillSubcategory[]
-    followUpSkillRules: Parameters<typeof resolveIsFollowUp>[0]['followUpSkillRules']
-    resolveBuffElement: (ownerAgentId: string) => string | undefined
-    resolveTriggerElement: (event: DamageEvent) => string | undefined
-  },
-): SkillCalcContext {
-  const { damageKind, anomalySubKind } = mapEventKindToCalc(event.kind)
-  const skillBound = event.skillBound !== false || damageKind === 'direct'
-  const ownerElement = options.resolveBuffElement(options.ownerAgentId)
-
-  return {
-    damageKind,
-    categoryId: skillBound ? event.categoryId : 'basic',
-    subcategoryId: skillBound ? (event.skillSubcategoryId ?? null) : null,
-    element: ownerElement,
-    staggerPhase: event.staggerPhase,
-    isFollowUp: skillBound
-      ? resolveIsFollowUp({
-          agentId: options.ownerAgentId,
-          categoryId: event.categoryId,
-          subcategoryId: event.skillSubcategoryId,
-          skillSubcategories: options.skillSubcategories,
-          followUpSkillRules: options.followUpSkillRules,
-        })
-      : false,
-    anomalySubKind,
   }
 }
 
@@ -117,16 +133,16 @@ export function resolveExtraGainValue(
 
 export function mergeExtraModsForEvent(
   gains: ExtraBuffGain[],
-  event: DamageEvent,
   skillCtx: SkillCalcContext,
   options: {
+    /** 当前正在汇总面板的槽位 */
+    slotIndex: number
     /** 当前正在汇总面板的 agentId */
     slotAgentId: string
-    ownerAgentId: string
     staggerPhase: StaggerPhase
     resolveAgentProfession?: (agentId: string) => string | undefined
     teamSlots?: Array<{ agentId?: string | null }>
-    agents?: Array<{ id: string; profession?: string | null }>
+    agents?: Array<{ id: string; profession?: string | null; name?: string }>
   },
 ): BuffStatModifiers {
   let total = createEmptyBuffStatModifiers()
@@ -135,9 +151,7 @@ export function mergeExtraModsForEvent(
     if (situation === 'stagger' && options.staggerPhase !== 'stagger') continue
     if (situation === 'non_stagger' && options.staggerPhase !== 'normal') continue
     if (!extraGainMatchesEvent(gain, skillCtx)) continue
-
-    const applyTarget = gain.applyTarget ?? 'self'
-    if (applyTarget === 'self' && options.slotAgentId !== options.ownerAgentId) continue
+    if (!extraGainAppliesToSlot(gain, options.slotIndex)) continue
 
     const beneficiaryProfession = options.resolveAgentProfession?.(options.slotAgentId)
     if (!extraGainMatchesProfession(gain, beneficiaryProfession)) continue
@@ -150,13 +164,6 @@ export function mergeExtraModsForEvent(
     total = mergeBuffStatModifiers(total, next)
   }
   return total
-}
-
-export function resolveOwnerAgentIdForEvent(
-  event: DamageEvent,
-  mainAgentId: string,
-): string {
-  return resolveEventOwnerAgentId(event, mainAgentId)
 }
 
 export function scopeLabel(scope: BuffScope | undefined): string {

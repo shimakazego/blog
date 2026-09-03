@@ -6,6 +6,12 @@ const props = defineProps<{
   summary: DamageOwnerShareSummary | null | undefined
   /** 当前选中的事件 id（高亮对应明细行） */
   selectedEventId?: string | null
+  /** 总伤期望标题，如「异常伤害事件总伤期望」 */
+  totalLabel?: string
+  /** 顶部提示文案 */
+  hint?: string
+  /** 未能计入总伤的事件（缺双代理人等） */
+  skippedEvents?: Array<{ eventId: string; displayName: string; reason: string }>
 }>()
 
 const emit = defineEmits<{
@@ -53,15 +59,40 @@ function onOwnerKeydown(event: KeyboardEvent, agentId: string) {
 function onEventClick(eventId: string) {
   emit('select-event', eventId)
 }
+
+function eventMetaText(event: {
+  total: number
+  perHit?: number
+  count?: number
+  ratio: number
+  ownerRatio: number
+}) {
+  const count = event.count ?? 0
+  if (event.perHit != null && count > 1) {
+    return `单次 ${formatNumber(event.perHit)} · 合计 ${formatNumber(event.total)}`
+  }
+  return formatNumber(event.total)
+}
 </script>
 
 <template>
-  <section v-if="summary?.shares.length" class="owner-share-block">
+  <section v-if="summary?.shares.length || skippedEvents?.length" class="owner-share-block">
     <div class="owner-share-header">
       <h3 class="owner-share-title">产生者伤害占比</h3>
-      <p class="owner-share-hint">点击产生者展开各事件在总伤中的占比</p>
+      <p class="owner-share-hint">
+        {{
+          hint ??
+          '总伤期望已并入本区。点击产生者展开事件明细，再点事件可查看计算过程。'
+        }}
+      </p>
     </div>
-    <ul class="owner-share-list">
+
+    <p v-if="summary" class="owner-share-total">
+      <span class="owner-share-total-label">{{ totalLabel ?? '伤害事件总伤期望' }}</span>
+      <strong class="owner-share-total-value">{{ formatNumber(summary.grandTotal) }}</strong>
+    </p>
+
+    <ul v-if="summary?.shares.length" class="owner-share-list">
       <li v-for="item in summary.shares" :key="item.agentId" class="owner-share-item">
         <div
           class="owner-share-trigger"
@@ -123,7 +154,7 @@ function onEventClick(eventId: string) {
             <span class="owner-event-meta">
               <span class="owner-event-ratio-total">{{ formatPct(event.ratio) }}</span>
               <span class="owner-share-sep" aria-hidden="true">·</span>
-              {{ formatNumber(event.total) }}
+              {{ eventMetaText(event) }}
               <span v-if="item.eventCount > 1" class="owner-event-ratio-owner">
                 （占 {{ item.agentName }} {{ formatPct(event.ownerRatio) }}）
               </span>
@@ -136,6 +167,17 @@ function onEventClick(eventId: string) {
             </div>
           </li>
         </ul>
+      </li>
+    </ul>
+
+    <p v-else-if="summary && !summary.shares.length" class="owner-share-empty">
+      当前统计范围内暂无计入总伤的事件。
+    </p>
+
+    <ul v-if="skippedEvents?.length" class="owner-skip-list">
+      <li v-for="item in skippedEvents" :key="item.eventId" class="owner-skip-item">
+        <span class="owner-skip-name">{{ item.displayName }}</span>
+        <span class="owner-skip-reason">{{ item.reason }}</span>
       </li>
     </ul>
   </section>
@@ -168,6 +210,39 @@ function onEventClick(eventId: string) {
 .owner-share-hint {
   margin: 0;
   font-size: 0.74rem;
+  color: var(--calc-muted, #9aa3b0);
+  line-height: 1.4;
+  max-width: 36rem;
+}
+
+.owner-share-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+  margin: 0.55rem 0 0;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  background: rgba(201, 165, 92, 0.1);
+  border: 1px solid rgba(201, 165, 92, 0.28);
+}
+
+.owner-share-total-label {
+  font-size: 0.8rem;
+  color: var(--calc-muted, #9aa3b0);
+}
+
+.owner-share-total-value {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--calc-accent, #c9a55c);
+  font-variant-numeric: tabular-nums;
+}
+
+.owner-share-empty {
+  margin: 0.55rem 0 0;
+  font-size: 0.78rem;
   color: var(--calc-muted, #9aa3b0);
 }
 
@@ -338,5 +413,34 @@ function onEventClick(eventId: string) {
   min-width: 2px;
   border-radius: inherit;
   background: color-mix(in srgb, var(--calc-accent, #c9a55c) 70%, transparent);
+}
+
+.owner-skip-list {
+  margin: 0.55rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.owner-skip-item {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 6px;
+  background: rgba(180, 80, 80, 0.08);
+  border: 1px solid rgba(180, 80, 80, 0.22);
+  font-size: 0.74rem;
+}
+
+.owner-skip-name {
+  color: var(--calc-text, #d5dae3);
+}
+
+.owner-skip-reason {
+  color: #e0a0a0;
 }
 </style>

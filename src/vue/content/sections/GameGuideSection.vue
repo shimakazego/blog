@@ -53,6 +53,35 @@
               </div>
             </div>
           </section>
+
+          <aside class="zzz-about-panel">
+            <div class="zzz-about-head">
+              <span class="zzz-eyebrow">ABOUT / 关于网站</span>
+              <h2 class="zzz-about-title">本工具箱的数据与功能来自开源项目 <b>ZZZ-HP</b></h2>
+            </div>
+            <p class="zzz-about-copy">
+              危局强袭、式舆防卫战、角色计算器与临界推演等模块由 ZZZ-HP 开发组在群里共创维护，
+              本站以入口形式接入，数据与功能均同步自该项目。
+            </p>
+            <div class="zzz-about-links">
+              <a class="zzz-about-link"
+                 href="https://zzz-hp.top/"
+                 target="_blank"
+                 rel="noopener noreferrer">
+                <strong>主站</strong>
+                <span>zzz-hp.top</span>
+                <em>↗</em>
+              </a>
+              <a class="zzz-about-link"
+                 href="https://github.com/Nie7bai/ZZZ-HP"
+                 target="_blank"
+                 rel="noopener noreferrer">
+                <strong>项目来源</strong>
+                <span>github.com/Nie7bai/ZZZ-HP</span>
+                <em>↗</em>
+              </a>
+            </div>
+          </aside>
         </div>
       </main>
     </PageSectionContent>
@@ -109,14 +138,14 @@ const modes = [
     english: "DAMAGE CALC",
     description: "面板、词条与伤害计算",
   },
-  // {
-  //   id: "deduction",
-  //   path: "/zzz/deduction",
-  //   number: "04",
-  //   title: "临界推演",
-  //   english: "CRITICAL DEDUCTION",
-  //   description: "推演模式数据浏览",
-  // },
+  {
+    id: "deduction",
+    path: "/zzz/deduction",
+    number: "04",
+    title: "临界推演",
+    english: "CRITICAL DEDUCTION",
+    description: "推演模式数据浏览",
+  },
   
 ];
 
@@ -145,17 +174,11 @@ onMounted(loadZzzOverview);
 
 <style lang="scss" scoped>
 .zzz-guide-section {
-  background: #050505;
+  background: var(--zzz-bg);
   padding-top: 0 !important;
 }
 
 .zzz-home {
-  --zzz-yellow: #fbfe00;
-  --zzz-bg: #050505;
-  --zzz-fg: #f5f5f0;
-  --zzz-dim: rgba(245, 245, 240, 0.58);
-  --zzz-card: #171717;
-  --zzz-line: rgba(255, 255, 255, 0.18);
   position: relative;
   min-height: 72vh;
   overflow: hidden;
@@ -374,6 +397,84 @@ onMounted(loadZzzOverview);
   margin-top: 0.2rem;
   color: var(--zzz-dim);
   font-size: 0.75rem;
+}
+
+/* ── 关于网站 / 来源注明 ── */
+.zzz-about-panel {
+  margin-top: 1rem;
+  padding: clamp(1.1rem, 3vw, 1.6rem);
+  border: 1px solid var(--zzz-line);
+  border-left: 4px solid var(--zzz-yellow);
+  border-radius: 0.25rem 1rem 1rem 0.25rem;
+  background: color-mix(in srgb, var(--zzz-card) 96%, transparent);
+}
+
+.zzz-about-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.zzz-about-title {
+  margin: 0;
+  font-size: clamp(1.05rem, 2.4vw, 1.4rem);
+  line-height: 1.5;
+}
+
+.zzz-about-title b {
+  color: var(--zzz-yellow);
+}
+
+.zzz-about-copy {
+  max-width: 52rem;
+  margin: 0.6rem 0 0;
+  color: var(--zzz-dim);
+  font-size: 0.85rem;
+  line-height: 1.8;
+}
+
+.zzz-about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.zzz-about-link {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 15rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--zzz-line);
+  border-radius: 0.5rem 0.5rem 0.15rem 0.5rem;
+  background: rgba(127, 127, 127, 0.08);
+  color: var(--zzz-fg);
+  text-decoration: none;
+  transition: 0.16s ease;
+}
+
+.zzz-about-link:hover {
+  border-color: var(--zzz-yellow);
+  background: var(--zzz-yellow);
+  color: #090909;
+}
+
+.zzz-about-link strong {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+
+.zzz-about-link span {
+  color: var(--zzz-dim);
+  font-size: 0.82rem;
+}
+
+.zzz-about-link em {
+  font-style: normal;
+  font-size: 1rem;
 }
 
 @keyframes zzz-drift {

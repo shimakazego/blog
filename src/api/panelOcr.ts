@@ -117,7 +117,7 @@ function withClientQuery(url: string): string {
 
 export async function fetchPanelOcrStatus(): Promise<PanelOcrStatus> {
   try {
-    const response = await fetch(withClientQuery('/api/ocr/status'), {
+    const response = await fetch(withClientQuery('/api/zzz/ocr/status'), {
       headers: buildOcrHeaders(),
       cache: 'no-store',
     })
@@ -148,7 +148,7 @@ export async function recognizePanelViaTencentOcr(file: File): Promise<PanelOcrA
   const body = new FormData()
   body.append('image', file)
   body.append('clientId', getOrCreateOcrClientId())
-  const response = await fetch(withClientQuery('/api/ocr/panel'), {
+  const response = await fetch(withClientQuery('/api/zzz/ocr/panel'), {
     method: 'POST',
     headers: buildOcrHeaders(),
     body,

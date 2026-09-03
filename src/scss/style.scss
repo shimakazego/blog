@@ -1,6 +1,9 @@
 @import "variables";
 @import "mixins";
 
+// 博客亮暗主题变量（html[data-theme] 驱动）
+@import "blog-theme";
+
 // importing bootstrap
 @import "bootstrap/scss/bootstrap";
 

@@ -25,3 +25,7 @@ dist/
 server/.env
 server/storage/uploads/*
 !server/storage/uploads/.gitkeep
+
+# OCR 工具运行产物
+artifacts/
+

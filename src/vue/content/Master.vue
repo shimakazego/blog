@@ -1,8 +1,8 @@
 <template>
-  <Navigation logo="/images/logo/agency-logo-small.png" label="*菅名のBlog*" />
+  <Navigation v-if="showSiteChrome" logo="/images/logo/agency-logo-small.png" label="*菅名のBlog*" />
 
   <router-view />
-  <Footer>
+  <Footer v-if="showSiteChrome">
     <FooterBlock :darken="false" :row="true">
       <FooterColumn
         title="关于本站"
@@ -53,14 +53,22 @@
       />
     </FooterBlock>
   </Footer>
+
+  <ThemeToggle/>
 </template>
 
 <script setup>
+import {computed} from "vue";
+import {useRoute} from "vue-router";
 import Navigation from "/src/vue/components/nav/Navigation.vue";
 import Footer from "/src/vue/components/footer/Footer.vue";
 import FooterBlock from "/src/vue/components/footer/FooterBlock.vue";
 import FooterCopyright from "/src/vue/components/footer/FooterCopyright.vue";
 import FooterColumn from "/src/vue/components/footer/FooterColumn.vue";
+import ThemeToggle from "/src/vue/components/widgets/ThemeToggle.vue";
+
+const route = useRoute();
+const showSiteChrome = computed(() => !route.meta.hideSiteChrome);
 </script>
 
 <style lang="scss" scoped>

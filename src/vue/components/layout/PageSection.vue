@@ -44,7 +44,8 @@ section.foxy-section {
         sm:   (padding: 2rem 0rem 3rem),
     ));
 
-    background-color: $background-color;
+    background-color: var(--blog-section-bg);
+    color: var(--blog-section-text);
     position: relative;
 
     .foxy-promo-background {

@@ -8,10 +8,9 @@ interface ApiResult<T> {
   error?: string
 }
 
-const ZZZ_API_PREFIX = '/api/zzz'
-
 export interface CreateBossPayload {
   recordScheme?: RecordScheme
+  mode?: 'crisis' | 'defense' | 'deduction'
   id?: number
   version: string
   phase: string
@@ -33,10 +32,14 @@ export interface CreateBossPayload {
   hp_coeff_percent?: number
   hp_coeff_manual?: boolean
   stagger_multiplier?: number | null
+  stagger_time?: number | null
+  /** 危局当期绑定的场地 Buff 套 id */
+  field_buff_set_id?: string | null
 }
 
 export interface CreateBuffPayload {
   recordScheme?: RecordScheme
+  mode?: 'crisis' | 'defense' | 'deduction'
   id?: number
   version: string
   phase: string
@@ -53,11 +56,20 @@ export interface CreateBuffPayload {
 export interface CreateBuffResult {
   id: number
   action?: 'created' | 'updated'
+  reusedFromName?: boolean
+}
+
+export interface BuffNameTemplate {
+  name: string
+  desc: string | null
+  buff_image: string | null
+  effect_blocks?: import('@/types/calculator').BuffEffectBlock[] | null
 }
 
 export interface UploadImageResult {
   url: string
   filename: string
+  stable?: boolean
 }
 
 export interface BossInfoRecord {
@@ -70,6 +82,16 @@ export interface BossInfoRecord {
   resistance: string | null
   crisis_base_hp?: number | null
   stagger_multiplier?: number | null
+  stagger_time?: number | null
+  field_buff_sets?: Array<{
+    id: string
+    label?: string | null
+    name: string
+    text?: string
+    image?: string | null
+    effectBlocks?: unknown[] | null
+  }> | null
+  field_buff_name?: string | null
 }
 
 export interface BossInfoSyncResult {
@@ -102,6 +124,8 @@ export interface BossRecord {
   resistance: string | null
   boss_image: string | null
   stagger_multiplier?: number | null
+  stagger_time?: number | null
+  field_buff_set_id?: string | null
 }
 
 export interface BuffRecord {
@@ -111,6 +135,40 @@ export interface BuffRecord {
   buff_name: string
   buff: string | null
   buff_image: string | null
+  effect_blocks?: import('@/types/calculator').BuffEffectBlock[] | null
+  mode?: 'crisis' | 'defense' | 'deduction' | string | null
+}
+
+export type BuffTableMode = 'crisis' | 'defense' | 'deduction'
+
+export interface BuffTableSnapshotRow {
+  id: number
+  version: string
+  phase: string
+  buffName: string
+  buff: string | null
+  buffImage: string | null
+  effectBlocks?: import('@/types/calculator').BuffEffectBlock[] | null
+  mode: BuffTableMode | string
+}
+
+export interface BuffTableSnapshot {
+  kind?: string
+  version?: number
+  exportedAt?: string
+  modeFilter?: BuffTableMode | null
+  count: number
+  byMode?: Record<string, number>
+  rows: BuffTableSnapshotRow[]
+}
+
+export interface BuffTableImportSummary {
+  total: number
+  inserted: number
+  updated: number
+  skipped: number
+  replaced: boolean
+  modeFilter: BuffTableMode | null
 }
 
 export interface AdminSearchParams {
@@ -139,11 +197,16 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return body.data
 }
 
-export async function uploadBossImage(file: File) {
+export async function uploadBossImage(
+  file: File,
+  opts: { bossName?: string; id?: string | number } = {},
+) {
   const formData = new FormData()
+  if (opts.bossName?.trim()) formData.append('bossName', opts.bossName.trim())
+  if (opts.id != null && String(opts.id).trim()) formData.append('id', String(opts.id).trim())
   formData.append('image', file)
 
-  const response = await fetch('/api/upload/boss', {
+  const response = await fetch('/api/zzz/upload/boss', {
     method: 'POST',
     headers: withAdminAuthHeaders(),
     body: formData,
@@ -152,11 +215,16 @@ export async function uploadBossImage(file: File) {
   return parseResponse<UploadImageResult>(response)
 }
 
-export async function uploadBuffImage(file: File) {
+export async function uploadBuffImage(
+  file: File,
+  opts: { buffName?: string; id?: string | number } = {},
+) {
   const formData = new FormData()
+  if (opts.id != null && String(opts.id).trim()) formData.append('id', String(opts.id).trim())
+  if (opts.buffName?.trim()) formData.append('buffName', opts.buffName.trim())
   formData.append('image', file)
 
-  const response = await fetch('/api/upload/buff', {
+  const response = await fetch('/api/zzz/upload/buff', {
     method: 'POST',
     headers: withAdminAuthHeaders(),
     body: formData,
@@ -169,7 +237,7 @@ export async function uploadCalculatorImage(file: File) {
   const formData = new FormData()
   formData.append('image', file)
 
-  const response = await fetch('/api/upload/calculator', {
+  const response = await fetch('/api/zzz/upload/calculator', {
     method: 'POST',
     headers: withAdminAuthHeaders(),
     body: formData,
@@ -187,9 +255,11 @@ export async function uploadCalculatorPublicImage(
 ) {
   const formData = new FormData()
   formData.append('image', file)
-  const query = new URLSearchParams({ kind, entityId: entityId.trim() })
+  // kind / entityId 放 multipart，避免 ID 含 `&`（如 orphie&magus）被 query 拆开
+  formData.append('kind', kind)
+  formData.append('entityId', entityId.trim())
 
-  const response = await fetch(`/api/upload/calculator-public?${query}`, {
+  const response = await fetch('/api/zzz/upload/calculator-public', {
     method: 'POST',
     headers: withAdminAuthHeaders(),
     body: formData,
@@ -204,11 +274,10 @@ export async function ensureCalculatorPublicAvatar(
   entityId: string,
   url: string,
 ) {
-  const query = new URLSearchParams({ kind, entityId: entityId.trim() })
-  const response = await fetch(`/api/upload/calculator-public/ensure?${query}`, {
+  const response = await fetch('/api/zzz/upload/calculator-public/ensure', {
     method: 'POST',
     headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ kind, entityId: entityId.trim(), url }),
   })
   return parseResponse<{ url: string; action: string }>(response)
 }
@@ -217,7 +286,7 @@ export async function lookupBossInfo(bossName: string) {
   const query = bossName.trim()
   if (!query) return null
 
-  const response = await fetch(`${ZZZ_API_PREFIX}/boss-info/lookup?boss_name=${encodeURIComponent(query)}`)
+  const response = await fetch(`/api/zzz/zzz/boss-info/lookup?boss_name=${encodeURIComponent(query)}`)
   return parseResponse<BossInfoRecord | null>(response)
 }
 
@@ -225,12 +294,12 @@ export async function searchBossInfoNames(keyword: string) {
   const query = keyword.trim()
   if (!query) return []
 
-  const response = await fetch(`${ZZZ_API_PREFIX}/boss-info/search?q=${encodeURIComponent(query)}`)
+  const response = await fetch(`/api/zzz/zzz/boss-info/search?q=${encodeURIComponent(query)}`)
   return parseResponse<string[]>(response)
 }
 
 export async function createBoss(payload: CreateBossPayload) {
-  const response = await fetch('/api/boss', {
+  const response = await fetch('/api/zzz/boss', {
     method: 'POST',
     headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
@@ -240,7 +309,7 @@ export async function createBoss(payload: CreateBossPayload) {
 }
 
 export async function createBuff(payload: CreateBuffPayload) {
-  const response = await fetch('/api/buff', {
+  const response = await fetch('/api/zzz/buff', {
     method: 'POST',
     headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
@@ -261,12 +330,12 @@ function buildSearchQuery(params: AdminSearchParams) {
 
 export async function searchBossRecords(params: AdminSearchParams = {}) {
   const query = buildSearchQuery(params)
-  const response = await fetch(`${ZZZ_API_PREFIX}/boss/search${query ? `?${query}` : ''}`)
+  const response = await fetch(`/api/zzz/zzz/boss/search${query ? `?${query}` : ''}`)
   return parseResponse<BossRecord[]>(response)
 }
 
 export async function deleteBossRecord(id: number) {
-  const response = await fetch(`/api/boss/${id}`, {
+  const response = await fetch(`/api/zzz/zzz/boss/${id}`, {
     method: 'DELETE',
     headers: withAdminAuthHeaders(),
   })
@@ -275,19 +344,55 @@ export async function deleteBossRecord(id: number) {
 
 export async function searchBuffRecords(params: AdminSearchParams = {}) {
   const query = buildSearchQuery(params)
-  const response = await fetch(`/api/buff/search${query ? `?${query}` : ''}`)
+  const response = await fetch(`/api/zzz/zzz/buff/search${query ? `?${query}` : ''}`)
   return parseResponse<BuffRecord[]>(response)
 }
 
+export async function fetchBuffNameTemplates(recordScheme?: RecordScheme) {
+  const query = recordScheme ? `?recordScheme=${encodeURIComponent(recordScheme)}` : ''
+  const response = await fetch(`/api/zzz/zzz/buff/templates${query}`)
+  return parseResponse<BuffNameTemplate[]>(response)
+}
+
+export async function fetchBuffTableSnapshot(mode?: BuffTableMode | null) {
+  const query = new URLSearchParams()
+  if (mode) query.set('mode', mode)
+  const qs = query.toString()
+  const response = await fetch(`/api/zzz/zzz/buff/export${qs ? `?${qs}` : ''}`, {
+    headers: withAdminAuthHeaders(),
+  })
+  return parseResponse<BuffTableSnapshot>(response)
+}
+
+export async function importBuffTableSnapshotFile(
+  file: File,
+  options?: { replace?: boolean; mode?: BuffTableMode | null },
+) {
+  const form = new FormData()
+  form.append('file', file)
+  const query = new URLSearchParams()
+  if (options?.replace) query.set('replace', '1')
+  if (options?.mode) query.set('mode', options.mode)
+  const qs = query.toString()
+  const response = await fetch(`/api/zzz/zzz/buff/import${qs ? `?${qs}` : ''}`, {
+    method: 'POST',
+    headers: withAdminAuthHeaders(),
+    body: form,
+  })
+  return parseResponse<BuffTableImportSummary>(response)
+}
+
 export async function deleteBuffRecord(id: number) {
-  const response = await fetch(`/api/buff/${id}`, {
+  const response = await fetch(`/api/zzz/zzz/buff/${id}`, {
     method: 'DELETE',
     headers: withAdminAuthHeaders(),
   })
-  return parseResponse<{ id: number }>(response)
+  return parseResponse<{ id: number; buff_name?: string; mode?: string; cleanedNodes?: number }>(
+    response,
+  )
 }
 
-export type SeasonDateMode = 'crisis' | 'defense'
+export type SeasonDateMode = 'crisis' | 'defense' | 'deduction'
 
 export interface SeasonDateRecord {
   id: number
@@ -307,12 +412,12 @@ export interface SeasonDatePayload {
 }
 
 export async function fetchSeasonDates(mode: SeasonDateMode) {
-  const response = await fetch(`/api/season-dates?mode=${mode}`)
+  const response = await fetch(`/api/zzz/zzz/season-dates?mode=${mode}`)
   return parseResponse<SeasonDateRecord[]>(response)
 }
 
 export async function createSeasonDate(payload: SeasonDatePayload) {
-  const response = await fetch('/api/season-dates', {
+  const response = await fetch('/api/zzz/season-dates', {
     method: 'POST',
     headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
@@ -321,7 +426,7 @@ export async function createSeasonDate(payload: SeasonDatePayload) {
 }
 
 export async function updateSeasonDate(id: number, payload: SeasonDatePayload) {
-  const response = await fetch(`/api/season-dates/${id}`, {
+  const response = await fetch(`/api/zzz/zzz/season-dates/${id}`, {
     method: 'PUT',
     headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
@@ -330,7 +435,7 @@ export async function updateSeasonDate(id: number, payload: SeasonDatePayload) {
 }
 
 export async function deleteSeasonDate(id: number) {
-  const response = await fetch(`/api/season-dates/${id}`, {
+  const response = await fetch(`/api/zzz/zzz/season-dates/${id}`, {
     method: 'DELETE',
     headers: withAdminAuthHeaders(),
   })
@@ -395,7 +500,7 @@ export async function previewSeasonContent(payload: {
   version: string
   phase: string
 }) {
-  const response = await fetch('/api/admin/season-content/preview', {
+  const response = await fetch('/api/zzz/admin/season-content/preview', {
     method: 'POST',
     headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
@@ -409,7 +514,7 @@ export async function softDeleteSeasonContent(payload: {
   phase: string
   confirmText: string
 }) {
-  const response = await fetch('/api/admin/season-content/soft-delete', {
+  const response = await fetch('/api/zzz/admin/season-content/soft-delete', {
     method: 'POST',
     headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
@@ -423,7 +528,7 @@ export async function restoreSeasonContent(payload: {
   phase: string
   confirmText: string
 }) {
-  const response = await fetch('/api/admin/season-content/restore', {
+  const response = await fetch('/api/zzz/admin/season-content/restore', {
     method: 'POST',
     headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
@@ -438,7 +543,7 @@ export async function cleanupSeasonContent(payload: {
   alsoDeleteDates?: boolean
   confirmText: string
 }) {
-  const response = await fetch('/api/admin/season-content/cleanup', {
+  const response = await fetch('/api/zzz/admin/season-content/cleanup', {
     method: 'POST',
     headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),

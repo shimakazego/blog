@@ -21,6 +21,7 @@ import {
 
 const props = defineProps<{
   title?: string
+  description?: string
 }>()
 
 const model = defineModel<DamageEnemyInput>({ required: true })
@@ -36,7 +37,9 @@ function patchEnemyInput(patch: Partial<DamageEnemyInput>) {
   replaceModel(patch)
 }
 
-const sectionTitle = computed(() => props.title ?? '敌方与环境')
+const sectionTitle = computed(() =>
+  props.title === undefined ? '敌方与环境' : props.title.trim(),
+)
 
 const bossSelectionLabel = computed(() => {
   const input = model.value
@@ -109,8 +112,11 @@ function switchMode(mode: EnemyInputMode) {
 
 <template>
   <section class="enemy-environment">
-    <header class="enemy-environment-header">
-      <h3 class="enemy-environment-title">{{ sectionTitle }}</h3>
+    <header class="enemy-environment-header" :class="{ 'enemy-environment-header--no-title': !sectionTitle }">
+      <div v-if="sectionTitle || description" class="enemy-environment-heading">
+        <h3 v-if="sectionTitle" class="enemy-environment-title">{{ sectionTitle }}</h3>
+        <p v-if="description" class="enemy-environment-desc">{{ description }}</p>
+      </div>
       <div class="input-mode-toggle" role="tablist" aria-label="敌方输入模式">
         <button
           type="button"
@@ -289,20 +295,41 @@ function switchMode(mode: EnemyInputMode) {
 .enemy-environment-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.65rem 1rem;
   margin-bottom: 0.65rem;
 }
 
+.enemy-environment-header--no-title {
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.enemy-environment-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .enemy-environment-title {
   margin: 0;
-  font-size: 0.9rem;
-  color: #e8ebf0;
+  font-size: 1.05rem;
+  color: #f0f2f6;
+}
+
+.enemy-environment-desc {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #9aa3b0;
 }
 
 .input-mode-toggle {
   display: inline-flex;
+  flex: 0 0 auto;
+  margin-left: auto;
   padding: 0.2rem;
   border-radius: 999px;
   border: 1px solid #2d323a;

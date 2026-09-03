@@ -11,6 +11,8 @@ export interface BuffInfo {
   isEmpty?: boolean
   /** 计算器结构化效果块 */
   effectBlocks?: import('@/types/calculator').BuffEffectBlock[] | null
+  /** 归属分组（推演按节点细分时用，如节点名 STAGE 01） */
+  groupLabel?: string
 }
 
 export interface EnemySlot {
@@ -27,6 +29,8 @@ export interface EnemySlot {
   elements: string[]
   defense?: number
   weakness?: string
+  /** 失衡时间（秒） */
+  staggerTime?: number | null
   resistance?: string
   footer?: string
   /** 怪物危局基础血量 */
@@ -35,13 +39,15 @@ export interface EnemySlot {
   hpCoeffPercent?: number | null
   /** 危局血量系数展示，如 150% */
   hpCoeffLabel?: string | null
-  /** 是否为困难房间（3.1+） */
+  /** 是否为绝境房间（3.1+） */
   isHardRoom?: boolean
   /** boss 表记录 ID（管理端编辑用） */
   recordId?: number
-  /** 危局房间码：1 / 2 / 3 / 4（困难） */
+  /** 危局房间码：1 / 2 / 3 / 4（绝境） */
   room?: string
-  /** Boss 场地 Buff（挂 boss_info，与 Boss 名一一对应） */
+  /** 当期绑定的场地 Buff 套 id（管理端） */
+  fieldBuffSetId?: string | null
+  /** Boss 场地 Buff（API 已按当期绑定解析） */
   fieldBuff?: {
     name: string
     text?: string
@@ -65,7 +71,7 @@ export interface PhaseData {
   /** 换算到 953 防御的总血量文案 */
   rawHpConverted953?: string
   totalHpConverted953?: number
-  /** 困难模式总血量（不计入普通总血量） */
+  /** 绝境模式总血量（不计入普通总血量） */
   rawHardHp?: string
   hardTotalHp?: number
   rawHardHpConverted953?: string

@@ -1,0 +1,953 @@
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import DualLineChartView from '@/components/history/DualLineChartView.vue'
+import PhaseDetailModal from '@/components/history/PhaseDetailModal.vue'
+import {
+  fetchCrisisAssaultHpChart,
+  filterChartPointsByLabels,
+  formatPhaseCompactCode,
+  resolvePhaseFromInput,
+  type CrisisHpChartMode,
+  type HpChartPoint,
+} from '@/api/crisisAssault'
+import { fetchDefensePhaseCompareChart } from '@/api/defense'
+import { fetchDeductionNodeHpChart } from '@/api/deduction'
+import { usePhaseDetailModal } from '@/composables/usePhaseDetailModal'
+import { useCrisisAssaultCompareStore } from '@/stores/crisisAssaultCompare'
+import { useDefenseCompareStore } from '@/stores/defenseCompare'
+import type { DefenseVariant } from '@/types/defense'
+import { modeTitles, type ModeKey } from '@/types/history'
+import { createRequestEpoch } from '@/utils/requestEpoch'
+
+const QUICK_ADD_ROW_LIMIT = 10
+/** 临界节点名较长：少放快捷按钮，其余（及全部）走下拉，避免被裁切 */
+const QUICK_ADD_ROW_LIMIT_DEDUCTION = 6
+
+type DefenseRemoveMode = 'direct' | 'menu'
+
+interface RemoveMenuAnchor {
+  top: number
+  left: number
+  minWidth: number
+}
+
+const props = defineProps<{
+  mode: ModeKey
+}>()
+
+const route = useRoute()
+const allPoints = ref<HpChartPoint[]>([])
+const chartLoadEpoch = createRequestEpoch()
+const crisisCompareStore = useCrisisAssaultCompareStore()
+const defenseCompareStore = useDefenseCompareStore()
+const phaseSearchInput = ref('')
+const inputError = ref('')
+const quickAddDropdownValue = ref('')
+const loading = ref(false)
+const loadError = ref('')
+const defenseRemoveMode = ref<DefenseRemoveMode>('menu')
+const removeMenuPoint = ref<HpChartPoint | null>(null)
+const removeMenuAnchor = ref<RemoveMenuAnchor | null>(null)
+const crisisHpMode = ref<CrisisHpChartMode>('normal')
+const { visible: detailVisible, point: detailPoint, open: openPhaseDetail, close: closePhaseDetail } =
+  usePhaseDetailModal()
+
+const defenseVariant = computed<DefenseVariant>(() =>
+  route.meta.defenseVariant === 'new' ? 'new' : 'old',
+)
+
+const selectedLabels = computed({
+  get() {
+    if (props.mode === 'deduction') return deductionSelectedLabels.value
+    if (props.mode === 'defense') return defenseCompareStore.selectedPhaseLabels
+    return crisisHpMode.value === 'hard'
+      ? crisisCompareStore.selectedHardPhaseLabels
+      : crisisCompareStore.selectedPhaseLabels
+  },
+  set(value: string[]) {
+    if (props.mode === 'deduction') {
+      deductionSelectedLabels.value = value
+      return
+    }
+    if (props.mode === 'defense') {
+      defenseCompareStore.selectedPhaseLabels = value
+      return
+    }
+    if (crisisHpMode.value === 'hard') {
+      crisisCompareStore.selectedHardPhaseLabels = value
+      return
+    }
+    crisisCompareStore.selectedPhaseLabels = value
+  },
+})
+
+const deductionSelectedLabels = ref<string[]>([])
+
+const pageTitle = computed(() => modeTitles[props.mode])
+
+const isDeductionMode = computed(() => props.mode === 'deduction')
+const isDefenseMode = computed(() => props.mode === 'defense')
+const isHardMode = computed(() => !isDefenseMode.value && crisisHpMode.value === 'hard')
+
+const chartPoints = computed(() =>
+  filterChartPointsByLabels(allPoints.value, selectedLabels.value),
+)
+
+const panelDesc = computed(() => {
+  if (props.mode === 'deduction') {
+    return '添加任意战斗节点，对比各节点总血量与相对膨胀；可勾选 953 防御换算（T）；输入期数号可一键添加该期全部节点'
+  }
+  if (isDefenseMode.value) {
+    return '添加任意期数，对比最后一防线总血量与相对膨胀变化；点击图表数据点可移除期数'
+  }
+  return isHardMode.value
+    ? '添加任意期数，对比绝境模式总血量与相对膨胀变化；可勾选 953 防御换算（T）'
+    : '添加任意期数，对比总血量与相对膨胀变化；可勾选 953 防御换算（T）'
+})
+
+const panelHeading = computed(() => {
+  if (isDeductionMode.value) return `${pageTitle.value} · 节点对比折线图`
+  return isHardMode.value
+    ? `${pageTitle.value} · 绝境期数对比折线图`
+    : `${pageTitle.value} · 期数对比折线图`
+})
+
+const defensePointClickHint = computed(() =>
+  defenseRemoveMode.value === 'direct' ? '点击数据点移除该期' : '点击数据点选择是否移除',
+)
+
+const isRemoveMenuOpen = computed(() => removeMenuPoint.value !== null && removeMenuAnchor.value !== null)
+
+const selectedPoints = computed(() => chartPoints.value)
+
+const quickAddPoints = computed(() =>
+  allPoints.value.filter((point) => !selectedLabels.value.includes(point.label)),
+)
+
+const quickAddInlineLimit = computed(() =>
+  isDeductionMode.value ? QUICK_ADD_ROW_LIMIT_DEDUCTION : QUICK_ADD_ROW_LIMIT,
+)
+
+const quickAddInlinePoints = computed(() =>
+  quickAddPoints.value.slice(0, quickAddInlineLimit.value),
+)
+
+/** 临界：下拉列出全部未选节点（不依赖「更多」切片，避免按钮被裁切后无法选） */
+const quickAddDropdownPoints = computed(() =>
+  isDeductionMode.value
+    ? quickAddPoints.value
+    : quickAddPoints.value.slice(QUICK_ADD_ROW_LIMIT),
+)
+
+const showQuickAddDropdown = computed(
+  () =>
+    quickAddDropdownPoints.value.length > 0 &&
+    (isDeductionMode.value || quickAddPoints.value.length > QUICK_ADD_ROW_LIMIT),
+)
+
+function formatPhaseDisplay(point: HpChartPoint) {
+  if (isDeductionMode.value) return point.label
+  if (point.version && point.phase) {
+    return `${point.version} 第 ${point.phase} 期`
+  }
+  return point.label
+}
+
+/** 临界快捷按钮短标签：期号 + 节点名，完整文案放 title */
+function formatDeductionQuickLabel(point: HpChartPoint) {
+  const sep = point.label.indexOf('·')
+  const nodeName = sep >= 0 ? point.label.slice(sep + 1) : point.label
+  return point.version ? `${point.version} ${nodeName}` : nodeName
+}
+
+/** 推演模式（节点对比）：期数号返回该期全部战斗节点；否则按节点名模糊匹配（可多个） */
+function resolveDeductionPoints(query: string): string[] {
+  const trimmed = query.trim()
+  if (!trimmed) return []
+  const byVersion = allPoints.value.filter((p) => p.version === trimmed)
+  if (byVersion.length) return byVersion.map((p) => p.label)
+  const normalized = trimmed.toLowerCase()
+  return allPoints.value
+    .filter((p) => p.label.toLowerCase().includes(normalized))
+    .map((p) => p.label)
+}
+
+async function loadChartData() {
+  const token = chartLoadEpoch.next()
+  loading.value = true
+  loadError.value = ''
+  try {
+    let data: HpChartPoint[] = []
+    if (props.mode === 'defense') {
+      data = await fetchDefensePhaseCompareChart(defenseVariant.value)
+    } else if (props.mode === 'crisis-assault') {
+      data = await fetchCrisisAssaultHpChart(crisisHpMode.value)
+    } else if (props.mode === 'deduction') {
+      data = await fetchDeductionNodeHpChart()
+    }
+    if (!chartLoadEpoch.isCurrent(token)) return
+    allPoints.value = data
+  } catch (error) {
+    if (!chartLoadEpoch.isCurrent(token)) return
+    loadError.value = error instanceof Error ? error.message : '加载失败'
+    allPoints.value = []
+  } finally {
+    if (!chartLoadEpoch.isCurrent(token)) return
+    loading.value = false
+  }
+}
+
+function addPhase(label: string) {
+  if (selectedLabels.value.includes(label)) return
+  selectedLabels.value = [...selectedLabels.value, label]
+}
+
+function addPhaseFromSearch(rawInput?: string) {
+  const query = (rawInput ?? phaseSearchInput.value).trim()
+  if (!query) return
+
+  if (isDeductionMode.value) {
+    const labels = resolveDeductionPoints(query)
+    if (!labels.length) {
+      inputError.value = '未找到该节点，可输入节点名（如 STAGE 01）或期数号（如 101）'
+      return
+    }
+    const fresh = labels.filter((label) => !selectedLabels.value.includes(label))
+    if (!fresh.length) {
+      inputError.value = '这些节点已添加'
+      return
+    }
+    selectedLabels.value = [...selectedLabels.value, ...fresh]
+    phaseSearchInput.value = ''
+    inputError.value = ''
+    return
+  }
+
+  const point = resolvePhaseFromInput(allPoints.value, query)
+  if (!point) {
+    inputError.value = '未找到该期数，可试 1.41 / 1.4第1期'
+    return
+  }
+
+  if (selectedLabels.value.includes(point.label)) {
+    inputError.value = '该期数已添加'
+    return
+  }
+
+  addPhase(point.label)
+  phaseSearchInput.value = ''
+  inputError.value = ''
+}
+
+function removePhase(label: string) {
+  selectedLabels.value = selectedLabels.value.filter((item) => item !== label)
+}
+
+function clearPhases() {
+  selectedLabels.value = []
+  closeRemoveMenu()
+}
+
+function closeRemoveMenu() {
+  removeMenuPoint.value = null
+  removeMenuAnchor.value = null
+}
+
+function openRemoveMenu(point: HpChartPoint, event: MouseEvent) {
+  const menuWidth = 200
+  let left = event.clientX - menuWidth / 2
+  let top = event.clientY + 10
+
+  if (left + menuWidth > window.innerWidth - 8) {
+    left = window.innerWidth - menuWidth - 8
+  }
+  if (left < 8) left = 8
+  if (top + 88 > window.innerHeight - 8) {
+    top = event.clientY - 88
+  }
+
+  removeMenuPoint.value = point
+  removeMenuAnchor.value = { top, left, minWidth: menuWidth }
+}
+
+function confirmRemoveFromMenu() {
+  if (removeMenuPoint.value) {
+    removePhase(removeMenuPoint.value.label)
+  }
+  closeRemoveMenu()
+}
+
+function onChartPointClick(point: HpChartPoint, _index: number, event?: MouseEvent) {
+  if (props.mode === 'deduction') return
+  if (isDefenseMode.value) {
+    if (event) event.stopPropagation()
+
+    if (defenseRemoveMode.value === 'direct') {
+      removePhase(point.label)
+      return
+    }
+
+    if (removeMenuPoint.value?.label === point.label && isRemoveMenuOpen.value) {
+      closeRemoveMenu()
+      return
+    }
+
+    if (event) openRemoveMenu(point, event)
+    return
+  }
+
+  openPhaseDetail(point)
+}
+
+function onDocumentClick() {
+  closeRemoveMenu()
+}
+
+function onDocumentKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') closeRemoveMenu()
+}
+
+watch(isRemoveMenuOpen, (open) => {
+  if (open) {
+    window.setTimeout(() => {
+      document.addEventListener('click', onDocumentClick)
+      document.addEventListener('keydown', onDocumentKeydown)
+    }, 0)
+    return
+  }
+
+  document.removeEventListener('click', onDocumentClick)
+  document.removeEventListener('keydown', onDocumentKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', onDocumentClick)
+  document.removeEventListener('keydown', onDocumentKeydown)
+})
+
+function onQuickAddDropdownChange() {
+  if (!quickAddDropdownValue.value) return
+  addPhase(quickAddDropdownValue.value)
+  quickAddDropdownValue.value = ''
+}
+
+onMounted(loadChartData)
+
+watch(defenseRemoveMode, closeRemoveMenu)
+
+watch(defenseVariant, () => {
+  if (props.mode === 'defense') loadChartData()
+})
+
+watch(crisisHpMode, () => {
+  if (props.mode === 'crisis-assault') loadChartData()
+})
+
+watch(phaseSearchInput, () => {
+  if (inputError.value) inputError.value = ''
+})
+</script>
+
+<template>
+  <div class="phase-compare-panel">
+    <header class="panel-header">
+      <h1 class="page-title">{{ panelHeading }}</h1>
+      <p class="panel-desc">{{ panelDesc }}</p>
+    </header>
+
+    <p v-if="loading" class="status-text">加载中...</p>
+    <p v-else-if="loadError" class="status-text error">{{ loadError }}</p>
+
+    <template v-else>
+      <section class="phase-selector">
+        <form class="phase-search-form" @submit.prevent="addPhaseFromSearch()">
+          <label class="selector-label" for="phase-search-input">搜索添加</label>
+          <div class="selector-actions">
+            <input
+              id="phase-search-input"
+              v-model="phaseSearchInput"
+              type="text"
+              class="phase-search-input"
+              :placeholder="isDeductionMode ? '节点名 / 101' : '1.41 / 1.4第1期'"
+              spellcheck="false"
+            />
+            <button type="submit" class="add-btn">添加</button>
+          </div>
+          <p v-if="inputError" class="input-error">{{ inputError }}</p>
+        </form>
+
+        <div v-if="quickAddPoints.length" class="quick-add">
+          <span class="quick-add-label">{{ isDeductionMode ? '快捷 / 下拉添加节点' : '快捷添加' }}</span>
+          <div class="quick-add-row" :class="{ 'quick-add-row--nodes': isDeductionMode }">
+            <div class="quick-add-btns">
+              <button
+                v-for="point in quickAddInlinePoints"
+                :key="point.label"
+                type="button"
+                class="quick-add-btn"
+                :class="{ 'quick-add-btn--node': isDeductionMode }"
+                :title="formatPhaseDisplay(point)"
+                @click="
+                  addPhaseFromSearch(isDeductionMode ? point.label : formatPhaseCompactCode(point))
+                "
+              >
+                {{ isDeductionMode ? formatDeductionQuickLabel(point) : formatPhaseCompactCode(point) }}
+              </button>
+            </div>
+            <select
+              v-if="showQuickAddDropdown"
+              v-model="quickAddDropdownValue"
+              class="quick-add-select"
+              :class="{ 'quick-add-select--nodes': isDeductionMode }"
+              :aria-label="isDeductionMode ? '下拉添加节点' : '更多期数'"
+              @change="onQuickAddDropdownChange"
+            >
+              <option value="">{{ isDeductionMode ? '选择节点添加…' : '更多期数' }}</option>
+              <option
+                v-for="point in quickAddDropdownPoints"
+                :key="point.label"
+                :value="point.label"
+              >
+                {{
+                  isDeductionMode
+                    ? formatPhaseDisplay(point)
+                    : `${formatPhaseCompactCode(point)} · ${formatPhaseDisplay(point)}`
+                }}
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <div v-if="selectedPoints.length" class="selected-phases">
+          <div class="selected-phases-header">
+            <span class="selected-label">
+              {{ isDeductionMode ? '已选节点' : '已选期数' }}（{{ selectedPoints.length }}）
+            </span>
+            <button type="button" class="clear-btn" @click="clearPhases">清空</button>
+          </div>
+
+          <div v-if="!isDefenseMode" class="phase-tags">
+            <button
+              v-for="point in selectedPoints"
+              :key="point.label"
+              type="button"
+              class="phase-tag"
+              :title="`移除 ${formatPhaseDisplay(point)}`"
+              @click="removePhase(point.label)"
+            >
+              <span>{{ formatPhaseDisplay(point) }}</span>
+              <span class="tag-remove" aria-hidden="true">×</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <DualLineChartView
+        v-model:remove-mode="defenseRemoveMode"
+        v-model:hp-mode="crisisHpMode"
+        class="chart-view"
+        :points="chartPoints"
+        show-when-empty
+        borderless
+        :show-hp-mode-toggle="!isDefenseMode && props.mode !== 'deduction'"
+        :enable-score-hp-overlays="!isDefenseMode && props.mode !== 'deduction'"
+        :hp-chart-title="
+          isDeductionMode
+            ? '节点对比 · 血量折线图'
+            : isHardMode
+              ? '绝境期数对比 · 血量折线图'
+              : '期数对比 · 血量折线图'
+        "
+        :expansion-chart-title="
+          isDeductionMode
+            ? '节点对比 · 血量相对膨胀折线图'
+            : isHardMode
+              ? '绝境期数对比 · 血量相对膨胀折线图'
+              : '期数对比 · 血量相对膨胀折线图'
+        "
+        :hp-aria-label="
+          isDefenseMode
+            ? '式舆防卫战期数对比血量折线图'
+            : isDeductionMode
+              ? `${pageTitle}节点对比血量折线图`
+              : `${pageTitle}${isHardMode ? '绝境' : ''}期数对比血量折线图`
+        "
+        :expansion-aria-label="
+          isDefenseMode
+            ? '式舆防卫战期数对比血量相对膨胀折线图'
+            : isDeductionMode
+              ? `${pageTitle}节点对比血量相对膨胀折线图`
+              : `${pageTitle}${isHardMode ? '绝境' : ''}期数对比血量相对膨胀折线图`
+        "
+        :enable-point-click="props.mode === 'deduction' ? false : isDefenseMode ? chartPoints.length > 0 : true"
+        :point-click-hint="isDefenseMode && chartPoints.length > 0 ? defensePointClickHint : undefined"
+        :show-remove-mode-toggle="isDefenseMode && chartPoints.length > 0"
+        :boss-preview-mode="isDefenseMode ? 'embedded' : 'crisis'"
+        :enable-boss-preview="false"
+        :enable-hp-converted953-toggle="!isDefenseMode"
+        @point-click="onChartPointClick"
+      />
+
+      <Teleport to="body">
+        <div
+          v-if="isDefenseMode && isRemoveMenuOpen && removeMenuPoint && removeMenuAnchor"
+          class="phase-remove-menu"
+          :style="{
+            top: `${removeMenuAnchor.top}px`,
+            left: `${removeMenuAnchor.left}px`,
+            minWidth: `${removeMenuAnchor.minWidth}px`,
+          }"
+          role="menu"
+          @click.stop
+        >
+          <p class="phase-remove-menu-title">{{ formatPhaseDisplay(removeMenuPoint) }}</p>
+          <button
+            type="button"
+            class="phase-remove-menu-item phase-remove-menu-item--danger"
+            role="menuitem"
+            @mousedown.prevent
+            @click="confirmRemoveFromMenu"
+          >
+            移除当前期数
+          </button>
+          <button
+            type="button"
+            class="phase-remove-menu-item"
+            role="menuitem"
+            @mousedown.prevent
+            @click="closeRemoveMenu"
+          >
+            取消
+          </button>
+        </div>
+      </Teleport>
+
+      <PhaseDetailModal
+        v-if="!isDefenseMode && props.mode !== 'deduction'"
+        :visible="detailVisible"
+        :point="detailPoint"
+        :mode="mode"
+        @close="closePhaseDetail"
+      />
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.phase-compare-panel {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0.35rem 0.25rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.panel-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.65rem;
+  flex-shrink: 0;
+}
+
+.page-title {
+  font-size: clamp(1.5rem, 3.5vw, 2rem);
+  font-weight: 700;
+  color: var(--color-heading);
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.panel-desc {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  color: var(--color-text);
+  text-align: center;
+}
+
+.phase-selector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+  flex-shrink: 0;
+}
+
+.phase-search-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+}
+
+.selector-label,
+.quick-add-label,
+.selected-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-heading);
+}
+
+.selector-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.phase-search-input {
+  width: 9.5rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background-soft);
+  color: var(--color-heading);
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.phase-search-input:focus {
+  border-color: #e8a838;
+}
+
+.add-btn,
+.clear-btn,
+.quick-add-btn {
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background-soft);
+  color: var(--color-heading);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    background-color 0.2s;
+}
+
+.add-btn:hover,
+.quick-add-btn:hover {
+  border-color: #e8a838;
+  background: var(--color-background-mute);
+}
+
+.clear-btn:hover {
+  border-color: #e85d4c;
+  color: #e85d4c;
+}
+
+.input-error {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #e85d4c;
+}
+
+.quick-add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+}
+
+.quick-add-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 0.4rem;
+  width: 100%;
+  max-width: min(960px, 100%);
+  overflow: hidden;
+}
+
+.quick-add-row--nodes {
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: nowrap;
+  overflow: visible;
+  gap: 0.65rem;
+}
+
+.quick-add-btns {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.quick-add-row--nodes .quick-add-btns {
+  flex: 1 1 auto;
+  justify-content: flex-start;
+}
+
+.quick-add-btn {
+  flex-shrink: 0;
+  min-width: 3.2rem;
+  padding-inline: 0.55rem;
+}
+
+.quick-add-btn--node {
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-add-select {
+  flex-shrink: 0;
+  min-width: 8.5rem;
+  max-width: 12rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background-soft);
+  color: var(--color-heading);
+  font-size: 0.85rem;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.quick-add-select--nodes {
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-width: 14rem;
+  max-width: 22rem;
+  width: 16rem;
+}
+
+.quick-add-select:hover,
+.quick-add-select:focus {
+  border-color: var(--color-border-hover);
+}
+
+.selected-phases {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+}
+
+.selected-phases-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+}
+
+.phase-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem;
+  max-width: min(960px, 100%);
+}
+
+.phase-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem 0.35rem 0.7rem;
+  border: 1px solid hsla(160, 100%, 37%, 0.45);
+  border-radius: 999px;
+  background: hsla(160, 100%, 37%, 0.12);
+  color: var(--color-heading);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    background-color 0.2s;
+}
+
+.phase-tag:hover {
+  border-color: #e85d4c;
+  background: hsla(0, 70%, 55%, 0.1);
+}
+
+.tag-remove {
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0.75;
+}
+
+.status-text {
+  min-height: 30vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  opacity: 0.75;
+}
+
+.status-text.error {
+  color: #e85d4c;
+  opacity: 1;
+}
+
+.chart-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+@media (max-width: 768px) {
+  .phase-compare-panel {
+    min-height: auto;
+    padding: 0.35rem 0.15rem 0.55rem;
+  }
+
+  .panel-header {
+    gap: 0.2rem;
+    margin-bottom: 0.45rem;
+  }
+
+  .page-title {
+    font-size: 1.05rem;
+  }
+
+  .panel-desc {
+    font-size: 0.72rem;
+    padding-inline: 0.35rem;
+    line-height: 1.35;
+  }
+
+  .phase-selector {
+    align-items: stretch;
+    gap: 0.5rem;
+    margin-bottom: 0.55rem;
+  }
+
+  .phase-search-form {
+    align-items: stretch;
+  }
+
+  .selector-actions {
+    width: 100%;
+  }
+
+  .phase-search-input {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+  }
+
+  .quick-add {
+    align-items: stretch;
+  }
+
+  .quick-add-row {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+    padding-bottom: 0.15rem;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .quick-add-row--nodes {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+
+  .quick-add-btns {
+    width: 100%;
+  }
+
+  .quick-add-btn {
+    min-height: 2.2rem;
+  }
+
+  .quick-add-select {
+    min-width: 7rem;
+    max-width: 9.5rem;
+  }
+
+  .quick-add-select--nodes {
+    margin-left: 0;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .selected-phases {
+    align-items: stretch;
+  }
+
+  .phase-tags {
+    justify-content: flex-start;
+    max-width: 100%;
+  }
+
+  .phase-tag {
+    font-size: 0.78rem;
+  }
+}
+</style>
+
+<style>
+.phase-remove-menu {
+  position: fixed;
+  z-index: 1200;
+  padding: 0.35rem 0 0.2rem;
+  border: 1.5px solid var(--color-border-hover);
+  border-radius: 8px;
+  background: var(--color-background);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.phase-remove-menu-title {
+  margin: 0;
+  padding: 0.2rem 0.75rem 0.35rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #e8a838;
+  text-align: center;
+}
+
+.phase-remove-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.48rem 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--color-heading);
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.phase-remove-menu-item:hover {
+  background: var(--color-background-mute);
+}
+
+.phase-remove-menu-item--danger {
+  color: #e85d4c;
+}
+
+.phase-remove-menu-item--danger:hover {
+  background: hsla(0, 70%, 55%, 0.1);
+}
+</style>

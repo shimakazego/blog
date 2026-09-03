@@ -12,6 +12,17 @@ import {
   buildStatSourceGroups,
   type StatSourceGroup,
 } from '@/utils/statSourceTips'
+import {
+  buildDefenseZoneFormulaItems,
+  buildDefenseZoneSourceGroups,
+  buildMutationZoneTipGroups,
+  buildPierceDmgZoneProcessItems,
+  buildRemielSelfAtkTipGroups,
+  buildRemielSelfMasteryTipGroups,
+  buildRemielSpecialLevelZoneGroups,
+  buildRemielStandardLevelZoneGroups,
+  buildResistanceZoneProcessItems,
+} from '@/utils/zoneSourceTips'
 import { formatCalcDecimal } from '@/utils/calcNumberFormat'
 import {
   buildAlignedAnomalyFormulaGroups,
@@ -24,6 +35,7 @@ import {
   formatDirectDmgMultZoneFormula,
   formatSettlementDmgMultZoneFormula,
 } from '@/utils/directDamageDisplay'
+import { normalizeDamageEnemyInput, resolveEnemyResistanceForElement } from '@/utils/enemyResistance'
 
 const props = defineProps<{
   calcParts: DamageCalcResult
@@ -38,6 +50,8 @@ const props = defineProps<{
     staggerMultiplier: number
     specialMultiplier: number
     level: number
+    resistanceType?: import('@/utils/enemyResistance').EnemyResistanceType
+    elementResistance?: import('@/utils/enemyResistance').ElementResistanceMap
   }
   isMb: boolean
   /** direct=通用乘区+直伤；anomaly=通用乘区+异常子类 */
@@ -50,10 +64,30 @@ const props = defineProps<{
   producerAgentLabel?: string
   /** 异常基础乘区角色名 */
   baseAgentLabel?: string
-  /** 增伤/倍率乘区角色名（主 C） */
+  /** 增伤/倍率乘区角色名（招式持有者或异常类触发者） */
   bonusAgentLabel?: string
   /** 异化系数区角色名（蕾米埃尔） */
   mutationAgentLabel?: string
+  /** 蕾米埃尔局内最终面板（异化系数来源） */
+  mutationFinalPanel?: PanelStats
+  mutationExternalPanel?: PanelStats
+  mutationSources?: BuffModSource[]
+  /** 本人耀变局内攻/精逐条来源 */
+  remielSelfAtkSourceItems?: string[]
+  remielSelfMasterySourceItems?: string[]
+  remielSelfExternalPanel?: PanelStats
+  remielSelfSources?: BuffModSource[]
+  remielSelfFinalPanel?: PanelStats
+  remielIsMb?: boolean
+  /** 类型增伤/倍率面板（属性异常/异放/耀变=异常类触发者；缺省回落 finalPanel） */
+  bonusFinalPanel?: PanelStats
+  bonusExternalPanel?: PanelStats
+  bonusSources?: BuffModSource[]
+  /** 减防/无视防御 tip（紊乱/乱流等：异常类触发者；缺省时属性异常/异放/耀变回落 bonus） */
+  defenseTriggerFinalPanel?: PanelStats
+  defenseTriggerExternalPanel?: PanelStats
+  defenseTriggerSources?: BuffModSource[]
+  defenseTriggerAgentLabel?: string
 }>()
 
 const anomalySubKind = computed(() => props.anomalySubKind ?? 'anomaly')
@@ -68,20 +102,12 @@ function formatNumber(v: number) {
 }
 
 function formatFormulaNumber(v: number, precision = 4) {
-  // 乘区/百分比统一明确展示到至少 4 位小数；大数与整数仍按原规则
+  // 乘区统一按指定精度展示；大数不再压成 2 位，避免手算与结果对不上
   if (!Number.isFinite(v)) return String(v)
   if (Number.isInteger(v) && Math.abs(v) < 1000) {
     return v.toLocaleString('en-US')
   }
-  if (Math.abs(v) >= 1000) {
-    return formatCalcDecimal(v, Math.min(precision, 2))
-  }
-  return formatCalcDecimal(v, Math.max(precision, 4))
-}
-
-function formatSigned(value: number) {
-  if (value > 0) return `+${value}`
-  return String(value)
+  return formatCalcDecimal(v, precision)
 }
 
 const generalFormulaParts = computed(() => {
@@ -91,15 +117,21 @@ const generalFormulaParts = computed(() => {
     formatFormulaNumber(p.dmgMultiplier),
     formatFormulaNumber(p.defenseMultiplier),
     formatFormulaNumber(p.resistanceMultiplier),
-    formatFormulaNumber(p.vulnerableMultiplier),
     formatFormulaNumber(p.staggerMultiplier),
   ]
 })
 
+const displayVulnerableMultiplier = computed(() =>
+  props.show === 'anomaly'
+    ? props.calcParts.anomalyVulnerableMultiplier
+    : props.calcParts.directVulnerableMultiplier,
+)
+
 const directFormulaParts = computed(() => {
   const p = props.calcParts
   const parts = [
-    formatFormulaNumber(p.generalMultiplier),
+    formatFormulaNumber(p.generalMultiplier, 2),
+    formatFormulaNumber(p.directVulnerableMultiplier),
     formatFormulaNumber(p.critMultiplier),
     formatFormulaNumber(p.specialMultiplier),
   ]
@@ -112,10 +144,21 @@ const directFormulaParts = computed(() => {
 
 const anomalyFormulaParts = computed(() => {
   const p = props.calcParts
+  if (p.remielSelfRadianceActive) {
+    return [
+      formatFormulaNumber(p.remielSelfInCombatAtk ?? 0, 4),
+      formatFormulaNumber(p.remielSelfInCombatMasteryZone ?? 0),
+      formatFormulaNumber(p.remielSelfSpecialLevelZone ?? 1),
+      formatFormulaNumber(p.remielSelfMutationZone ?? p.mutationZone),
+      formatFormulaNumber(p.remielSelfStandardLevelZone ?? 1),
+    ]
+  }
   return [
-    formatFormulaNumber(p.generalMultiplier),
+    formatFormulaNumber(p.generalMultiplier, 2),
+    formatFormulaNumber(p.anomalyVulnerableMultiplier),
     formatFormulaNumber(p.masteryZone),
     formatFormulaNumber(p.levelZone),
+    formatFormulaNumber(p.specialMultiplier),
   ]
 })
 
@@ -159,6 +202,8 @@ type ValueTipsKey =
   | 'defenseMultiplier'
   | 'resistanceMultiplier'
   | 'vulnerableMultiplier'
+  | 'directVulnerableMultiplier'
+  | 'anomalyVulnerableMultiplier'
   | 'staggerMultiplier'
   | 'generalMultiplier'
   | 'critRateRatio'
@@ -198,6 +243,13 @@ type ValueTipsKey =
   | 'radianceCombinedDmgBonusZone'
   | 'radianceMultZone'
   | 'mutationZone'
+  | 'pierceDmgMultiplier'
+  | 'remielSelfInCombatAtk'
+  | 'remielSelfInCombatMasteryZone'
+  | 'remielSelfSpecialLevelZone'
+  | 'remielSelfStandardLevelZone'
+  | 'remielSelfDefenseMultiplier'
+  | 'remielSelfResistanceMultiplier'
 
 interface AlignedFormulaTerm {
   label: string
@@ -235,10 +287,9 @@ const alignedGeneralFormula = computed((): AlignedFormulaGroup => {
       { label: '增伤区', value: formatFormulaNumber(p.dmgMultiplier), tipsKey: 'dmgMultiplier' },
       { label: '防御区', value: formatFormulaNumber(p.defenseMultiplier), tipsKey: 'defenseMultiplier' },
       { label: '抗性区', value: formatFormulaNumber(p.resistanceMultiplier), tipsKey: 'resistanceMultiplier' },
-      { label: '易伤区', value: formatFormulaNumber(p.vulnerableMultiplier), tipsKey: 'vulnerableMultiplier' },
       { label: '失衡易伤区', value: formatFormulaNumber(p.staggerMultiplier), tipsKey: 'staggerMultiplier' },
     ],
-    result: formatNumber(p.generalMultiplier),
+    result: formatFormulaNumber(p.generalMultiplier, 2),
   }
 })
 
@@ -276,28 +327,81 @@ function withTotal(groups: StatSourceGroup[], totalText: string, processItems?: 
 
 const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
   const p = props.calcParts
-  const panel = props.finalPanel
-  const external = props.externalPanel
-  const sources = props.sources
+  const ownerPanel = props.finalPanel
+  const ownerExternal = props.externalPanel
+  const ownerSources = props.sources
   const enemy = props.enemyInput
   const pierceMod = props.pierceMod
 
   const sub = anomalySubKind.value
+  const usesProducerBase =
+    (sub === 'anomaly' ||
+      sub === 'turbulence' ||
+      sub === 'disorder' ||
+      sub === 'anomalyRelease' ||
+      sub === 'radiance') &&
+    Boolean(props.producerFinalPanel && props.producerExternalPanel && props.producerSources)
+  // 通用乘区（含增伤区）在异常基础链上取异常强度提供者
+  const panel = usesProducerBase ? props.producerFinalPanel! : ownerPanel
+  const external = usesProducerBase ? props.producerExternalPanel! : ownerExternal
+  const sources = usesProducerBase ? props.producerSources! : ownerSources
+
   const usesProducerMult =
     (sub === 'turbulence' || sub === 'disorder') &&
     Boolean(props.producerFinalPanel && props.producerExternalPanel && props.producerSources)
-  const multPanel = usesProducerMult ? props.producerFinalPanel! : panel
-  const multExternal = usesProducerMult ? props.producerExternalPanel! : external
-  const multSources = usesProducerMult ? props.producerSources! : sources
-  const producerExtraGroup = usesProducerMult
+  const multPanel = usesProducerMult ? props.producerFinalPanel! : ownerPanel
+  const multExternal = usesProducerMult ? props.producerExternalPanel! : ownerExternal
+  const multSources = usesProducerMult ? props.producerSources! : ownerSources
+  const producerExtraGroup = usesProducerBase
     ? [
         {
-          label: props.producerAgentLabel ?? '异常产生角色',
-          items: ['紊乱/乱流基础与补偿倍率、异常持续时间取产生角色面板'],
+          label: props.producerAgentLabel ?? '异常强度提供者',
+          items: usesProducerMult
+            ? [
+                '异常基础乘区（含通用增伤区）、紊乱/乱流倍率与持续时间取异常强度提供者；类型增伤（紊乱/乱流增伤）与异常暴击取招式持有者；减防/无视取异常类触发者',
+              ]
+            : sub === 'radiance'
+              ? [
+                  '异常基础乘区（含通用增伤区）取异常强度提供者；耀变综合增伤/倍率取异常类触发者；减防/无视取异常类触发者',
+                ]
+              : [
+                  '异常基础乘区（含通用增伤区）取异常强度提供者；类型增伤/倍率取异常类触发者；减防/无视取异常类触发者',
+                ],
         },
       ]
     : []
 
+  // 类型增伤/倍率/暴击：属性异常/异放/耀变→异常类触发者；紊乱/乱流→招式持有者
+  const bonusPanel = props.bonusFinalPanel ?? ownerPanel
+  const bonusExternal = props.bonusExternalPanel ?? ownerExternal
+  const bonusSources = props.bonusSources ?? ownerSources
+  // 减防/无视：属性异常/异放/耀变可用 bonus（触发者）
+  const usesBonusAsDefTrig =
+    sub === 'anomaly' || sub === 'anomalyRelease' || sub === 'radiance'
+  const defTrigPanel = usesBonusAsDefTrig
+    ? bonusPanel
+    : (props.defenseTriggerFinalPanel ?? ownerPanel)
+  const defTrigExternal = usesBonusAsDefTrig
+    ? bonusExternal
+    : (props.defenseTriggerExternalPanel ?? ownerExternal)
+  const defTrigSources = usesBonusAsDefTrig
+    ? bonusSources
+    : (props.defenseTriggerSources ?? ownerSources)
+  const defTrigLabel = usesBonusAsDefTrig
+    ? (props.bonusAgentLabel ?? '异常类触发者')
+    : (props.defenseTriggerAgentLabel ?? (props.bonusAgentLabel ?? '招式持有者'))
+  const remielExt = props.remielSelfExternalPanel ?? (p.remielSelfRadianceActive ? props.producerExternalPanel ?? external : external)
+  const remielPanelForSelf = props.remielSelfFinalPanel ?? (p.remielSelfRadianceActive ? props.producerFinalPanel ?? panel : panel)
+  const remielSourcesForSelf = props.remielSelfSources ?? []
+  const remielResPenTotal =
+    (remielPanelForSelf.resPen ?? 0) + (remielPanelForSelf.radianceResPen ?? 0)
+  const remielEnemyRes =
+    p.remielSelfRadianceActive && p.remielSelfResistanceElement
+      ? resolveEnemyResistanceForElement(
+          normalizeDamageEnemyInput(props.enemyInput),
+          p.remielSelfResistanceElement,
+        )
+      : 0
   const atkGroups = buildStatSourceGroups({
     keys: ['inCombatAtkPercent', 'atk'],
     externalPanel: external,
@@ -381,41 +485,51 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
               defProcessItems,
             )
           : pierceBaseDamageTips,
-    dmgMultiplier: withTotal(
-      buildStatSourceGroups({
+    dmgMultiplier: (() => {
+      const skillBonus = sources.reduce((sum, s) => sum + (s.mods.skillDmgBonus ?? 0), 0)
+      const generalBonus = panel.dmgBonus - skillBonus
+      const generalGroups = buildStatSourceGroups({
         keys: ['dmgBonus'],
         externalPanel: external,
         sources,
-        finalValues: { dmgBonus: panel.dmgBonus },
-      }),
-      `局内增伤 ${formatFormulaNumber(panel.dmgBonus, 2)}% → 增伤区 1 + ${formatFormulaNumber(panel.dmgBonus, 2)}% = ${formatFormulaNumber(p.dmgMultiplier)}`,
-    ),
-    defenseMultiplier: props.isMb
-      ? [{ label: '命破主C', items: ['防御区固定为 1'] }]
-      : withTotal(
-          buildStatSourceGroups({
-            keys: ['reduceDefense', 'penRate'],
+        finalValues: { dmgBonus: generalBonus },
+      }).map((group) => ({
+        ...group,
+        label: skillBonus ? `通用 · ${group.label}` : group.label,
+      }))
+      const skillGroups = skillBonus
+        ? buildStatSourceGroups({
+            keys: ['skillDmgBonus'],
             externalPanel: external,
             sources,
-            finalValues: { reduceDefense: panel.reduceDefense, penRate: panel.penRate },
-            extraGroups: [
-              {
-                label: '敌方与环境 / 局外面板',
-                items: [
-                  `敌方防御 ${formatFormulaNumber(enemy.defense, 2)}`,
-                  `无视防御 ${formatFormulaNumber(external.ignoreDefense, 2)}%`,
-                  `穿透值 ${formatFormulaNumber(external.pen, 2)}`,
-                ],
-              },
-            ],
-            showAdditiveProcess: false,
-          }),
-          `有效防御 ${formatFormulaNumber(p.effectiveDefense, 2)} → 防御区 794 / (794 + ${formatFormulaNumber(p.effectiveDefense, 2)}) = ${formatFormulaNumber(p.defenseMultiplier)}`,
-          [
-            `有效防御 ${formatFormulaNumber(p.effectiveDefense, 2)}`,
-            `794 / (794 + ${formatFormulaNumber(p.effectiveDefense, 2)}) = ${formatFormulaNumber(p.defenseMultiplier)}`,
-          ],
-        ),
+            finalValues: { skillDmgBonus: skillBonus },
+          }).map((group) => ({
+            ...group,
+            label: `招式 · ${group.label}`,
+          }))
+        : []
+      return withTotal(
+        [...generalGroups, ...skillGroups],
+        skillBonus
+          ? `增伤区 1 + ${formatFormulaNumber(generalBonus, 2)}% + ${formatFormulaNumber(skillBonus, 2)}% = ${formatFormulaNumber(p.dmgMultiplier)}`
+          : `局内增伤 ${formatFormulaNumber(panel.dmgBonus, 2)}% → 增伤区 1 + ${formatFormulaNumber(panel.dmgBonus, 2)}% = ${formatFormulaNumber(p.dmgMultiplier)}`,
+      )
+    })(),
+    defenseMultiplier: buildDefenseZoneSourceGroups({
+      enemyDefense: enemy.defense,
+      penRatePanel: panel,
+      penRateExternal: external,
+      penRateSources: sources,
+      defCutPanel: defTrigPanel,
+      defCutExternal: defTrigExternal,
+      defCutSources: defTrigSources,
+      defCutLabel: defTrigLabel,
+      splitDefCut: usesProducerBase,
+      isMb: props.isMb,
+      mbLabel: '命破招式持有者',
+      penRateRole: usesProducerBase ? '强度提供者' : '持有者',
+      defCutRole: usesProducerBase ? '触发者' : '持有者',
+    }),
     resistanceMultiplier: withTotal(
       [
         {
@@ -427,22 +541,14 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
           externalPanel: external,
           sources,
           finalValues: { resPen: panel.resPen },
-          showAdditiveProcess: false,
         }),
       ],
       `抗性区 1 - ${formatFormulaNumber(p.enemyResistance)} + ${formatFormulaNumber(panel.resPen, 2)}% = ${formatFormulaNumber(p.resistanceMultiplier)}`,
-      [
-        `敌方抗性 ${formatFormulaNumber(p.enemyResistance)}`,
-        ...(panel.resPen || sources.some((s) => s.mods.resPen)
-          ? [
-              `局内抗穿 ${formatFormulaNumber(panel.resPen, 2)}%`,
-              ...sources
-                .filter((s) => s.mods.resPen)
-                .map((s) => `${s.label} ${formatSigned(s.mods.resPen)}%`),
-            ]
-          : []),
-        `1 - ${formatFormulaNumber(p.enemyResistance)} + ${formatFormulaNumber(panel.resPen, 2)}% = ${formatFormulaNumber(p.resistanceMultiplier)}`,
-      ],
+      buildResistanceZoneProcessItems({
+        enemyResistance: p.enemyResistance,
+        resPen: panel.resPen,
+        zone: p.resistanceMultiplier,
+      }),
     ),
     vulnerableMultiplier: withTotal(
       [
@@ -451,21 +557,98 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
           items: [`易伤基础 ${formatFormulaNumber(enemy.vulnerableMultiplier)}`],
         },
         ...buildStatSourceGroups({
-          keys: ['vulnerable'],
+          keys:
+            props.show === 'anomaly'
+              ? ['vulnerable', 'anomalyVulnerable', 'dmgReduction', 'anomalyDmgReduction']
+              : ['vulnerable', 'directVulnerable', 'dmgReduction', 'directDmgReduction'],
           externalPanel: external,
           sources,
-          externalKeyMap: { vulnerable: null },
+          externalKeyMap: {
+            vulnerable: null,
+            directVulnerable: null,
+            anomalyVulnerable: null,
+            dmgReduction: null,
+            directDmgReduction: null,
+            anomalyDmgReduction: null,
+          },
           showAdditiveProcess: false,
         }),
       ],
-      `易伤区 ${formatFormulaNumber(p.vulnerableMultiplier)}`,
+      `易伤区 ${formatFormulaNumber(displayVulnerableMultiplier.value)}`,
       buildEnemyCombatProcessItems({
         baseLabel: '易伤基础',
         baseValue: enemy.vulnerableMultiplier,
         sources,
-        buffKey: 'vulnerable',
-        finalValue: p.vulnerableMultiplier,
-        resultLabel: '易伤区',
+        buffKeys:
+          props.show === 'anomaly'
+            ? ['vulnerable', 'anomalyVulnerable']
+            : ['vulnerable', 'directVulnerable'],
+        subtractKeys:
+          props.show === 'anomaly'
+            ? ['dmgReduction', 'anomalyDmgReduction']
+            : ['dmgReduction', 'directDmgReduction'],
+        finalValue: displayVulnerableMultiplier.value,
+        resultLabel: props.show === 'anomaly' ? '非直伤易伤区' : '直伤易伤区',
+      }),
+    ),
+    directVulnerableMultiplier: withTotal(
+      [
+        {
+          label: '敌方与环境',
+          items: [`易伤基础 ${formatFormulaNumber(enemy.vulnerableMultiplier)}`],
+        },
+        ...buildStatSourceGroups({
+          keys: ['vulnerable', 'directVulnerable', 'dmgReduction', 'directDmgReduction'],
+          externalPanel: external,
+          sources,
+          externalKeyMap: {
+            vulnerable: null,
+            directVulnerable: null,
+            dmgReduction: null,
+            directDmgReduction: null,
+          },
+          showAdditiveProcess: false,
+        }),
+      ],
+      `直伤易伤区 ${formatFormulaNumber(p.directVulnerableMultiplier)}`,
+      buildEnemyCombatProcessItems({
+        baseLabel: '易伤基础',
+        baseValue: enemy.vulnerableMultiplier,
+        sources,
+        buffKeys: ['vulnerable', 'directVulnerable'],
+        subtractKeys: ['dmgReduction', 'directDmgReduction'],
+        finalValue: p.directVulnerableMultiplier,
+        resultLabel: '直伤易伤区',
+      }),
+    ),
+    anomalyVulnerableMultiplier: withTotal(
+      [
+        {
+          label: '敌方与环境',
+          items: [`易伤基础 ${formatFormulaNumber(enemy.vulnerableMultiplier)}`],
+        },
+        ...buildStatSourceGroups({
+          keys: ['vulnerable', 'anomalyVulnerable', 'dmgReduction', 'anomalyDmgReduction'],
+          externalPanel: external,
+          sources,
+          externalKeyMap: {
+            vulnerable: null,
+            anomalyVulnerable: null,
+            dmgReduction: null,
+            anomalyDmgReduction: null,
+          },
+          showAdditiveProcess: false,
+        }),
+      ],
+      `非直伤易伤区 ${formatFormulaNumber(p.anomalyVulnerableMultiplier)}`,
+      buildEnemyCombatProcessItems({
+        baseLabel: '易伤基础',
+        baseValue: enemy.vulnerableMultiplier,
+        sources,
+        buffKeys: ['vulnerable', 'anomalyVulnerable'],
+        subtractKeys: ['dmgReduction', 'anomalyDmgReduction'],
+        finalValue: p.anomalyVulnerableMultiplier,
+        resultLabel: '非直伤易伤区',
       }),
     ),
     staggerMultiplier: withTotal(
@@ -475,10 +658,14 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
           items: [`失衡易伤基础 ${formatFormulaNumber(enemy.staggerMultiplier)}`],
         },
         ...buildStatSourceGroups({
-          keys: ['staggerVulnerable'],
+          keys: ['globalStaggerVulnerable', 'staggerVulnerable', 'staggerVulnerableOnly'],
           externalPanel: external,
           sources,
-          externalKeyMap: { staggerVulnerable: null },
+          externalKeyMap: {
+            globalStaggerVulnerable: null,
+            staggerVulnerable: null,
+            staggerVulnerableOnly: null,
+          },
           showAdditiveProcess: false,
         }),
       ],
@@ -487,7 +674,7 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         baseLabel: '失衡易伤基础',
         baseValue: enemy.staggerMultiplier,
         sources,
-        buffKey: 'staggerVulnerable',
+        buffKeys: ['globalStaggerVulnerable', 'staggerVulnerable', 'staggerVulnerableOnly'],
         finalValue: p.staggerMultiplier,
         resultLabel: '失衡易伤区',
       }),
@@ -500,17 +687,16 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
           `增伤区 ${generalFormulaParts.value[1]}`,
           `防御区 ${generalFormulaParts.value[2]}`,
           `抗性区 ${generalFormulaParts.value[3]}`,
-          `易伤区 ${generalFormulaParts.value[4]}`,
-          `失衡易伤区 ${generalFormulaParts.value[5]}`,
-          `合计 ${formatNumber(p.generalMultiplier)}`,
+          `失衡易伤区 ${generalFormulaParts.value[4]}`,
+          `合计 ${formatFormulaNumber(p.generalMultiplier, 2)}（不含易伤区）`,
         ],
       },
       {
         label: '加减过程',
         fullWidth: true,
         items: [
-          `${generalFormulaParts.value[0]} × ${generalFormulaParts.value[1]} × ${generalFormulaParts.value[2]} × ${generalFormulaParts.value[3]} × ${generalFormulaParts.value[4]} × ${generalFormulaParts.value[5]}`,
-          `= ${formatNumber(p.generalMultiplier)}`,
+          `${generalFormulaParts.value[0]} × ${generalFormulaParts.value[1]} × ${generalFormulaParts.value[2]} × ${generalFormulaParts.value[3]} × ${generalFormulaParts.value[4]}`,
+          `= ${formatFormulaNumber(p.generalMultiplier, 2)}`,
         ],
       },
     ],
@@ -556,6 +742,29 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         resultLabel: '特殊乘区',
       }),
     ),
+    pierceDmgMultiplier: withTotal(
+      [
+        {
+          label: '乘区说明',
+          items:
+            p.baseDamageSource === 'pierce'
+              ? ['基础伤害来源为贯穿力，贯穿增伤作为独立乘区生效']
+              : ['基础伤害来源非贯穿力，贯穿增伤区固定为 1'],
+        },
+        ...buildStatSourceGroups({
+          keys: ['pierceDmgBonus'],
+          externalPanel: external,
+          sources,
+          externalKeyMap: { pierceDmgBonus: null },
+        }),
+      ],
+      `贯穿增伤区 ${formatFormulaNumber(p.pierceDmgMultiplier)}`,
+      buildPierceDmgZoneProcessItems({
+        active: p.baseDamageSource === 'pierce',
+        bonusPercent: Math.max(0, (p.pierceDmgMultiplier - 1) * 100),
+        zone: p.pierceDmgMultiplier,
+      }),
+    ),
     directDmgMultZone: withTotal(
       buildStatSourceGroups({
         keys: ['directDmgMult', 'directDmgMultFactor'],
@@ -591,33 +800,42 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
     ),
     effectiveDefense: withTotal(
       buildStatSourceGroups({
-        keys: ['reduceDefense', 'penRate'],
+        keys: usesProducerBase ? ['penRate'] : ['reduceDefense', 'penRate'],
         externalPanel: external,
         sources,
-        finalValues: { reduceDefense: panel.reduceDefense, penRate: panel.penRate },
+        finalValues: usesProducerBase
+          ? { penRate: panel.penRate }
+          : { reduceDefense: panel.reduceDefense, penRate: panel.penRate },
         extraGroups: [
+          ...(usesProducerBase
+            ? buildStatSourceGroups({
+                keys: ['reduceDefense'],
+                externalPanel: defTrigExternal,
+                sources: defTrigSources,
+                finalValues: { reduceDefense: defTrigPanel.reduceDefense },
+              })
+            : []),
           {
             label: '敌方与环境 / 局外面板',
             items: [
               `敌方防御 ${formatFormulaNumber(enemy.defense, 2)}`,
-              `无视防御 ${formatFormulaNumber(external.ignoreDefense, 2)}%`,
-              `穿透值 ${formatFormulaNumber(external.pen, 2)}`,
+              `无视防御 ${formatFormulaNumber(defTrigExternal.ignoreDefense, 2)}%（局外，不受增益）`,
+              `穿透值 ${formatFormulaNumber(external.pen, 2)}（局外，不受增益）`,
             ],
           },
         ],
-        showAdditiveProcess: false,
       }),
       `有效防御 ${formatFormulaNumber(p.effectiveDefense, 2)}`,
-      [
-        `敌方防御 ${formatFormulaNumber(enemy.defense, 2)}`,
-        `无视防御 ${formatFormulaNumber(external.ignoreDefense, 2)}%`,
-        `减防 ${formatFormulaNumber(panel.reduceDefense, 2)}%`,
-        `穿透率 ${formatFormulaNumber(panel.penRate, 2)}%`,
-        `穿透值 ${formatFormulaNumber(external.pen, 2)}`,
-        `防御因子 ${formatFormulaNumber(p.defenseFactor)}`,
-        `折后防御 ${formatFormulaNumber(enemy.defense * p.defenseFactor * (1 - p.penRateRatio), 2)}`,
-        `折后防御 - 穿透值 = ${formatFormulaNumber(p.effectiveDefense, 2)}`,
-      ],
+      buildDefenseZoneFormulaItems({
+        enemyDefense: enemy.defense,
+        ignoreDefense: defTrigPanel.ignoreDefense,
+        reduceDefense: defTrigPanel.reduceDefense,
+        penRate: panel.penRate,
+        pen: external.pen,
+        isMb: props.isMb,
+        penRateRole: usesProducerBase ? '强度提供者' : '持有者',
+        defCutRole: usesProducerBase ? '触发者' : '持有者',
+      }),
     ),
     piercePower: withTotal(
       [
@@ -673,63 +891,87 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
     ),
     levelZone: [
       {
-        label: '敌方与环境',
+        label: usesProducerBase
+          ? (props.producerAgentLabel ?? '异常强度提供者')
+          : '招式持有者',
         items: [
-          `代理人等级 ${Math.round(enemy.level)}`,
-          `等级区 ${formatFormulaNumber(p.levelZone)} = 1 + (${Math.round(enemy.level)} - 1) / 59`,
+          `角色等级 ${Math.round(p.levelZoneAgentLevel)}`,
+          `等级区 ${formatFormulaNumber(p.levelZone)} = 1 + (${Math.round(p.levelZoneAgentLevel)} - 1) / 59`,
         ],
       },
     ],
     anomalyDmgBonusZone: withTotal(
       buildStatSourceGroups({
         keys: ['anomalyDmgBonus'],
-        externalPanel: external,
-        sources,
-        finalValues: { anomalyDmgBonus: panel.anomalyDmgBonus },
+        externalPanel: bonusExternal,
+        sources: bonusSources,
+        finalValues: { anomalyDmgBonus: bonusPanel.anomalyDmgBonus },
       }),
-      `异常增伤区 1 + ${formatFormulaNumber(panel.anomalyDmgBonus, 2)}% = ${formatFormulaNumber(p.anomalyDmgBonusZone)}`,
+      `异常增伤区 1 + ${formatFormulaNumber(bonusPanel.anomalyDmgBonus, 2)}% = ${formatFormulaNumber(p.anomalyDmgBonusZone)}`,
     ),
     anomalyMultZone: withTotal(
       buildStatSourceGroups({
-        keys: ['anomalyMult'],
-        externalPanel: external,
-        sources,
-        finalValues: { anomalyMult: panel.anomalyMult },
+        keys: ['anomalyMult', 'anomalyMultFactor'],
+        externalPanel: bonusExternal,
+        sources: bonusSources,
+        finalValues: {
+          anomalyMult: bonusPanel.anomalyMult,
+          anomalyMultFactor: bonusPanel.anomalyMultFactor,
+        },
       }),
-      `异常倍率区 ${formatFormulaNumber(panel.anomalyMult, 2)}% = ${formatFormulaNumber(p.anomalyMultZone)}`,
+      `异常倍率区 max(0, ${formatFormulaNumber(bonusPanel.anomalyMult, 2)}%) × 修正 ${formatFormulaNumber(bonusPanel.anomalyMultFactor ?? 100, 2)}% = ${formatFormulaNumber(p.anomalyMultZone)}`,
+      [
+        `加算 ${formatFormulaNumber(bonusPanel.anomalyMult, 2)}% → ${formatFormulaNumber(Math.max(0, bonusPanel.anomalyMult / 100))}`,
+        `倍率修正 ${formatFormulaNumber(bonusPanel.anomalyMultFactor ?? 100, 2)}% → ×${formatFormulaNumber((bonusPanel.anomalyMultFactor ?? 100) / 100)}`,
+        `= ${formatFormulaNumber(p.anomalyMultZone)}`,
+      ],
     ),
     anomalyReleaseCombinedDmgBonusZone: [
       {
         label: '乘区组成',
         items: [
-          `异放增伤区 1 + ${formatFormulaNumber(panel.anomalyReleaseDmgBonus, 2)}% = ${formatFormulaNumber(1 + panel.anomalyReleaseDmgBonus / 100)}`,
-          `异常增伤区 1 + ${formatFormulaNumber(panel.anomalyDmgBonus, 2)}% = ${formatFormulaNumber(p.anomalyDmgBonusZone)}`,
-          `异放综合增伤区 1 + (${formatFormulaNumber(panel.anomalyReleaseDmgBonus, 2)}% + ${formatFormulaNumber(panel.anomalyDmgBonus, 2)}%) = ${formatFormulaNumber(p.anomalyReleaseCombinedDmgBonusZone)}`,
+          `异放增伤区 1 + ${formatFormulaNumber(bonusPanel.anomalyReleaseDmgBonus, 2)}% = ${formatFormulaNumber(1 + bonusPanel.anomalyReleaseDmgBonus / 100)}`,
+          `异常增伤区 1 + ${formatFormulaNumber(bonusPanel.anomalyDmgBonus, 2)}% = ${formatFormulaNumber(p.anomalyDmgBonusZone)}`,
+          `异放综合增伤区 1 + (${formatFormulaNumber(bonusPanel.anomalyReleaseDmgBonus, 2)}% + ${formatFormulaNumber(bonusPanel.anomalyDmgBonus, 2)}%) = ${formatFormulaNumber(p.anomalyReleaseCombinedDmgBonusZone)}`,
         ],
       },
+      ...buildStatSourceGroups({
+        keys: ['anomalyReleaseDmgBonus', 'anomalyDmgBonus'],
+        externalPanel: bonusExternal,
+        sources: bonusSources,
+        finalValues: {
+          anomalyReleaseDmgBonus: bonusPanel.anomalyReleaseDmgBonus,
+          anomalyDmgBonus: bonusPanel.anomalyDmgBonus,
+        },
+      }),
     ],
     anomalyReleaseMultZone: withTotal(
       buildStatSourceGroups({
         keys: ['anomalyReleaseMult', 'anomalyReleaseMultFactor'],
-        externalPanel: external,
-        sources,
+        externalPanel: bonusExternal,
+        sources: bonusSources,
         finalValues: {
-          anomalyReleaseMult: panel.anomalyReleaseMult,
-          anomalyReleaseMultFactor: panel.anomalyReleaseMultFactor,
+          anomalyReleaseMult: bonusPanel.anomalyReleaseMult,
+          anomalyReleaseMultFactor: bonusPanel.anomalyReleaseMultFactor,
         },
       }),
-      `异放倍率区 ${formatFormulaNumber(panel.anomalyReleaseMult, 2)}% × ${formatFormulaNumber(panel.anomalyReleaseMultFactor, 2)}% = ${formatFormulaNumber(p.anomalyReleaseMultZone)}`,
+      `异放倍率区 max(0, ${formatFormulaNumber(bonusPanel.anomalyReleaseMult, 2)}%) × 修正 ${formatFormulaNumber(bonusPanel.anomalyReleaseMultFactor ?? 100, 2)}% = ${formatFormulaNumber(p.anomalyReleaseMultZone)}`,
+      [
+        `加算 ${formatFormulaNumber(bonusPanel.anomalyReleaseMult, 2)}% → ${formatFormulaNumber(Math.max(0, bonusPanel.anomalyReleaseMult / 100))}`,
+        `倍率修正 ${formatFormulaNumber(bonusPanel.anomalyReleaseMultFactor ?? 100, 2)}% → ×${formatFormulaNumber((bonusPanel.anomalyReleaseMultFactor ?? 100) / 100)}`,
+        `= ${formatFormulaNumber(p.anomalyReleaseMultZone)}`,
+      ],
     ),
     anomalyCombinedCritZone: withTotal(
       buildStatSourceGroups({
         keys: ['anomalyCritRate', 'anomalyCritDmg', 'anomalyReleaseCritRate', 'anomalyReleaseCritDmg'],
-        externalPanel: external,
-        sources,
+        externalPanel: bonusExternal,
+        sources: bonusSources,
         finalValues: {
-          anomalyCritRate: panel.anomalyCritRate,
-          anomalyCritDmg: panel.anomalyCritDmg,
-          anomalyReleaseCritRate: panel.anomalyReleaseCritRate,
-          anomalyReleaseCritDmg: panel.anomalyReleaseCritDmg,
+          anomalyCritRate: bonusPanel.anomalyCritRate,
+          anomalyCritDmg: bonusPanel.anomalyCritDmg,
+          anomalyReleaseCritRate: bonusPanel.anomalyReleaseCritRate,
+          anomalyReleaseCritDmg: bonusPanel.anomalyReleaseCritDmg,
         },
       }),
       [
@@ -741,11 +983,11 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
     anomalyCritZone: withTotal(
       buildStatSourceGroups({
         keys: ['anomalyCritRate', 'anomalyCritDmg'],
-        externalPanel: external,
-        sources,
+        externalPanel: bonusExternal,
+        sources: bonusSources,
         finalValues: {
-          anomalyCritRate: panel.anomalyCritRate,
-          anomalyCritDmg: panel.anomalyCritDmg,
+          anomalyCritRate: bonusPanel.anomalyCritRate,
+          anomalyCritDmg: bonusPanel.anomalyCritDmg,
         },
       }),
       [
@@ -754,31 +996,75 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         `实际期望：1 + ${formatFormulaNumber(p.anomalyCritRateRatio)} × ${formatFormulaNumber(p.anomalyCritDmgRatio)} = ${formatFormulaNumber(p.anomalyCritZone)}`,
       ].join('；'),
     ),
-    anomalyBaseExpected: [
-      {
-        label: p.mutationZone > 1 ? '乘区组成（含异化系数；不含异常增伤/倍率/暴击）' : '乘区组成（不含异常增伤/倍率/暴击）',
-        items: [
-          `通用乘区 ${anomalyFormulaParts.value[0]}`,
-          `精通区 ${anomalyFormulaParts.value[1]}`,
-          `等级区 ${anomalyFormulaParts.value[2]}`,
-          ...(p.mutationZone > 1
-            ? [`异化系数区 ${formatFormulaNumber(p.mutationZone)}`]
-            : []),
-          `合计 ${formatNumber(anomalyBaseWithMutation.value)}`,
+    anomalyBaseExpected: p.remielSelfRadianceActive
+      ? [
+          {
+            label: '乘区组成（蕾米埃尔异常基础；已含异化系数与双等级区）',
+            items: [
+              `局内攻击力 ${anomalyFormulaParts.value[0]}`,
+              `局内精通区 ${anomalyFormulaParts.value[1]}`,
+              `特殊等级区 ${anomalyFormulaParts.value[2]}`,
+              `异化系数区 ${anomalyFormulaParts.value[3]}`,
+              `等级区 ${anomalyFormulaParts.value[4]}`,
+              `合计 ${formatNumber(anomalyBaseWithMutation.value)}`,
+            ],
+          },
+          {
+            label: '加减过程',
+            fullWidth: true,
+            items: [
+              anomalyFormulaParts.value.join(' × '),
+              `= ${formatNumber(anomalyBaseWithMutation.value)}`,
+            ],
+          },
+        ]
+      : [
+          {
+            label: p.mutationZone > 1 ? '乘区组成（含异化系数；不含异常增伤/倍率/暴击）' : '乘区组成（不含异常增伤/倍率/暴击）',
+            items: [
+              `通用乘区 ${anomalyFormulaParts.value[0]}`,
+              `精通区 ${anomalyFormulaParts.value[1]}`,
+              `等级区 ${anomalyFormulaParts.value[2]}`,
+              ...(p.mutationZone > 1
+                ? [`异化系数区 ${formatFormulaNumber(p.mutationZone)}`]
+                : []),
+              `合计 ${formatNumber(anomalyBaseWithMutation.value)}`,
+            ],
+          },
+          {
+            label: '加减过程',
+            fullWidth: true,
+            items: [
+              [
+                ...anomalyFormulaParts.value,
+                ...(p.mutationZone > 1 ? [formatFormulaNumber(p.mutationZone)] : []),
+              ].join(' × '),
+              `= ${formatNumber(anomalyBaseWithMutation.value)}`,
+            ],
+          },
         ],
-      },
-      {
-        label: '加减过程',
-        fullWidth: true,
-        items: [
-          [
-            ...anomalyFormulaParts.value,
-            ...(p.mutationZone > 1 ? [formatFormulaNumber(p.mutationZone)] : []),
-          ].join(' × '),
-          `= ${formatNumber(anomalyBaseWithMutation.value)}`,
-        ],
-      },
-    ],
+    remielSelfInCombatAtk: p.remielSelfRadianceActive
+      ? buildRemielSelfAtkTipGroups({
+          externalAtk: remielExt.atk,
+          inCombatAtk: p.remielSelfInCombatAtk ?? 0,
+          sourceItems: props.remielSelfAtkSourceItems ?? [],
+          fullPanelAtk: remielPanelForSelf.atk,
+        })
+      : [],
+    remielSelfInCombatMasteryZone: p.remielSelfRadianceActive
+      ? buildRemielSelfMasteryTipGroups({
+          externalMastery: remielExt.mastery,
+          inCombatMasteryZone: p.remielSelfInCombatMasteryZone ?? 0,
+          sourceItems: props.remielSelfMasterySourceItems ?? [],
+          fullPanelMastery: remielPanelForSelf.mastery,
+        })
+      : [],
+    remielSelfSpecialLevelZone: p.remielSelfRadianceActive
+      ? buildRemielSpecialLevelZoneGroups(p.levelZoneAgentLevel, p.remielSelfSpecialLevelZone)
+      : [],
+    remielSelfStandardLevelZone: p.remielSelfRadianceActive
+      ? buildRemielStandardLevelZoneGroups(p.levelZoneAgentLevel, p.remielSelfStandardLevelZone)
+      : [],
     anomalyExpected: [
       {
         label: '乘区组成（含异常增伤/倍率/暴击）',
@@ -814,6 +1100,12 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         }),
       ],
       `异常持续时间 ${formatFormulaNumber(multPanel.anomalyDuration, 2)}s → 有效 ${formatFormulaNumber(p.effectiveAnomalyDuration)}s`,
+      [
+        `面板持续时间 ${formatFormulaNumber(multPanel.anomalyDuration, 2)}s（强度提供者）`,
+        Math.abs(p.effectiveAnomalyDuration - multPanel.anomalyDuration) > 1e-6
+          ? `火/以太（强度提供者）：有效时间 = 面板 / 0.5（×2）→ ${formatFormulaNumber(p.effectiveAnomalyDuration)}s`
+          : `有效时间 = 面板 → ${formatFormulaNumber(p.effectiveAnomalyDuration)}s`,
+      ],
     ),
     disorderCompMult: withTotal(
       [
@@ -830,11 +1122,11 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
     disorderDmgBonusZone: withTotal(
       buildStatSourceGroups({
         keys: ['disorderDmgBonus'],
-        externalPanel: external,
-        sources,
-        finalValues: { disorderDmgBonus: panel.disorderDmgBonus },
+        externalPanel: bonusExternal,
+        sources: bonusSources,
+        finalValues: { disorderDmgBonus: bonusPanel.disorderDmgBonus },
       }),
-      `紊乱增伤区 1 + ${formatFormulaNumber(panel.disorderDmgBonus, 2)}% = ${formatFormulaNumber(p.disorderDmgBonusZone)}`,
+      `紊乱增伤区 1 + ${formatFormulaNumber(bonusPanel.disorderDmgBonus, 2)}% = ${formatFormulaNumber(p.disorderDmgBonusZone)}`,
     ),
     disorderZone: [
       ...(producerExtraGroup.length ? producerExtraGroup : []),
@@ -903,11 +1195,11 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
     turbulenceDmgBonusZone: withTotal(
       buildStatSourceGroups({
         keys: ['turbulenceDmgBonus'],
-        externalPanel: external,
-        sources,
-        finalValues: { turbulenceDmgBonus: panel.turbulenceDmgBonus },
+        externalPanel: bonusExternal,
+        sources: bonusSources,
+        finalValues: { turbulenceDmgBonus: bonusPanel.turbulenceDmgBonus },
       }),
-      `乱流增伤区 1 + ${formatFormulaNumber(panel.turbulenceDmgBonus, 2)}% = ${formatFormulaNumber(p.turbulenceDmgBonusZone)}`,
+      `乱流增伤区 1 + ${formatFormulaNumber(bonusPanel.turbulenceDmgBonus, 2)}% = ${formatFormulaNumber(p.turbulenceDmgBonusZone)}`,
     ),
     turbulenceZone: [
       ...(producerExtraGroup.length ? producerExtraGroup : []),
@@ -943,7 +1235,7 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         label: '加减过程',
         fullWidth: true,
         items: [
-          `1 + ${formatFormulaNumber(panel.turbulenceDmgBonus, 2)}% + ${formatFormulaNumber(panel.anomalyDmgBonus, 2)}%`,
+          `1 + ${formatFormulaNumber(bonusPanel.turbulenceDmgBonus, 2)}% + ${formatFormulaNumber(bonusPanel.anomalyDmgBonus, 2)}%`,
           `= ${formatFormulaNumber(p.turbulenceCombinedDmgBonusZone)}`,
         ],
       },
@@ -976,11 +1268,23 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
     radianceExpected: [
       {
         label: '乘区组成',
-        items: [
-          `异常基础期望 ${formatNumber(anomalyBaseWithMutation.value)}`,
-          `耀变综合增伤区 ${formatFormulaNumber(p.radianceCombinedDmgBonusZone)}（耀变增伤+异常增伤）`,
-          `耀变倍率区 ${formatFormulaNumber(p.radianceMultZone)}`,
-        ],
+        items: props.calcParts.remielSelfRadianceActive
+          ? [
+              `蕾米埃尔异常基础 ${formatNumber(anomalyBaseWithMutation.value)}`,
+              `防御区 ${formatFormulaNumber(p.remielSelfDefenseMultiplier ?? 1)}`,
+              `抗性区 ${formatFormulaNumber(p.remielSelfResistanceMultiplier ?? 1)}`,
+              `易伤区 ${formatFormulaNumber(p.anomalyVulnerableMultiplier)}`,
+              `失衡易伤区 ${formatFormulaNumber(p.staggerMultiplier)}`,
+              `耀变综合增伤区 ${formatFormulaNumber(p.radianceCombinedDmgBonusZone)}（耀变增伤+异常增伤）`,
+              `耀变倍率区 ${formatFormulaNumber(p.radianceMultZone)}`,
+              `特殊倍率乘区 ${formatFormulaNumber(p.specialMultZone)}`,
+              `特殊乘区 ${formatFormulaNumber(p.specialMultiplier)}`,
+            ]
+          : [
+              `异常基础期望 ${formatNumber(anomalyBaseWithMutation.value)}`,
+              `耀变综合增伤区 ${formatFormulaNumber(p.radianceCombinedDmgBonusZone)}（耀变增伤+异常增伤）`,
+              `耀变倍率区 ${formatFormulaNumber(p.radianceMultZone)}`,
+            ],
       },
     ],
     radianceMutation: [
@@ -992,41 +1296,121 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         ],
       },
     ],
-    radianceCombinedDmgBonusZone: [
-      {
-        label: '乘区组成',
-        items: [
-          `耀变增伤区 ${formatFormulaNumber(1 + panel.radianceDmgBonus / 100)}`,
-          `异常增伤区 ${formatFormulaNumber(p.anomalyDmgBonusZone)}`,
-          `耀变综合增伤区 ${formatFormulaNumber(p.radianceCombinedDmgBonusZone)}`,
-        ],
-      },
-    ],
-    radianceMultZone: buildStatSourceGroups({
-      keys: ['radianceMult', 'radianceMultFactor'],
-      externalPanel: external,
-      sources,
-      externalKeyMap: { radianceMult: null, radianceMultFactor: null },
-    }),
-    mutationZone: [
-      {
-        label: '异化系数',
-        items: [
-          props.mutationAgentLabel
-            ? `取 ${props.mutationAgentLabel} 局内最终面板的异化系数与修正`
+    radianceCombinedDmgBonusZone: (() => {
+      const radianceBonus = bonusPanel.radianceDmgBonus
+      const anomalyBonus = bonusPanel.anomalyDmgBonus
+      return [
+        {
+          label: '乘区组成',
+          items: [
+            `耀变增伤区 1 + ${formatFormulaNumber(radianceBonus, 2)}% = ${formatFormulaNumber(1 + radianceBonus / 100)}`,
+            `异常增伤区 1 + ${formatFormulaNumber(anomalyBonus, 2)}% = ${formatFormulaNumber(p.anomalyDmgBonusZone)}`,
+            `耀变综合增伤区 1 + (${formatFormulaNumber(radianceBonus, 2)}% + ${formatFormulaNumber(anomalyBonus, 2)}%) = ${formatFormulaNumber(p.radianceCombinedDmgBonusZone)}`,
+          ],
+        },
+        ...buildStatSourceGroups({
+          keys: ['radianceDmgBonus'],
+          externalPanel: bonusExternal,
+          sources: bonusSources,
+          finalValues: { radianceDmgBonus: radianceBonus },
+        }),
+        ...buildStatSourceGroups({
+          keys: ['anomalyDmgBonus'],
+          externalPanel: bonusExternal,
+          sources: bonusSources,
+          finalValues: { anomalyDmgBonus: anomalyBonus },
+        }),
+      ]
+    })(),
+    radianceMultZone: withTotal(
+      buildStatSourceGroups({
+        keys: ['radianceMult', 'radianceMultFactor'],
+        externalPanel: bonusExternal,
+        sources: bonusSources,
+        externalKeyMap: { radianceMult: null, radianceMultFactor: null },
+        finalValues: {
+          radianceMult: bonusPanel.radianceMult,
+          radianceMultFactor: bonusPanel.radianceMultFactor,
+        },
+      }),
+      `耀变倍率区 max(0, ${formatFormulaNumber(bonusPanel.radianceMult, 2)}%) × 修正 ${formatFormulaNumber(bonusPanel.radianceMultFactor ?? 100, 2)}% = ${formatFormulaNumber(p.radianceMultZone)}`,
+      [
+        `加算 ${formatFormulaNumber(bonusPanel.radianceMult, 2)}% → ${formatFormulaNumber(Math.max(0, bonusPanel.radianceMult / 100))}`,
+        `倍率修正 ${formatFormulaNumber(bonusPanel.radianceMultFactor ?? 100, 2)}% → ×${formatFormulaNumber((bonusPanel.radianceMultFactor ?? 100) / 100)}`,
+        `= ${formatFormulaNumber(p.radianceMultZone)}`,
+      ],
+    ),
+    mutationZone: buildMutationZoneTipGroups({
+      zone: p.remielSelfRadianceActive
+        ? (p.remielSelfMutationZone ?? p.mutationZone)
+        : p.mutationZone,
+      title: p.remielSelfRadianceActive ? '异化系数（本人耀变）' : '异化系数',
+      noteItems: [
+        p.remielSelfRadianceActive
+          ? '取蕾米埃尔最终局内面板的异化系数与修正（含队友/邦布）'
+          : props.mutationAgentLabel
+            ? `由 ${props.mutationAgentLabel} 提供（取该角色局内最终面板的异化系数与修正）`
             : '取队伍中蕾米埃尔局内最终面板的异化系数与修正',
-          `异化系数区 ${formatFormulaNumber(p.mutationZone)}`,
-        ],
-      },
-    ],
+      ],
+      externalPanel: props.mutationExternalPanel,
+      sources: props.mutationSources,
+      finalPanel: props.mutationFinalPanel,
+    }),
+    remielSelfDefenseMultiplier: p.remielSelfRadianceActive
+      ? buildDefenseZoneSourceGroups({
+          enemyDefense: enemy.defense,
+          penRatePanel: remielPanelForSelf,
+          penRateExternal: remielExt,
+          penRateSources: remielSourcesForSelf,
+          defCutPanel: defTrigPanel,
+          defCutExternal: defTrigExternal,
+          defCutSources: defTrigSources,
+          defCutLabel: defTrigLabel,
+          splitDefCut: true,
+          isMb: Boolean(props.remielIsMb),
+          mbLabel: '蕾米埃尔',
+          penRateRole: '蕾米埃尔',
+          defCutRole: '触发者',
+        })
+      : [],
+    remielSelfResistanceMultiplier: p.remielSelfRadianceActive
+      ? withTotal(
+          [
+            {
+              label: '敌方与环境',
+              items: [
+                p.remielSelfResistanceElement
+                  ? `${p.remielSelfResistanceElement} 抗性 ${formatFormulaNumber(remielEnemyRes)}`
+                  : '无后续非流明队友，敌方抗性按无弱点无抗性（0）',
+              ],
+            },
+            ...buildStatSourceGroups({
+              keys: ['resPen', 'radianceResPen'],
+              externalPanel: remielExt,
+              sources: remielSourcesForSelf,
+              finalValues: {
+                resPen: remielPanelForSelf.resPen,
+                radianceResPen: remielPanelForSelf.radianceResPen,
+              },
+            }),
+          ],
+          `抗性区 1 - ${formatFormulaNumber(remielEnemyRes)} + ${formatFormulaNumber(remielResPenTotal, 2)}% = ${formatFormulaNumber(p.remielSelfResistanceMultiplier ?? 1)}`,
+          buildResistanceZoneProcessItems({
+            enemyResistance: remielEnemyRes,
+            resPen: remielResPenTotal,
+            zone: p.remielSelfResistanceMultiplier ?? 1,
+          }),
+        )
+      : [],
   }
 })
 </script>
 
 <template>
   <div class="damage-result-detail">
-    <h3 class="result-section-title">通用乘区</h3>
-    <div class="formula-block formula-block--aligned">
+    <h3 v-if="!calcParts.remielSelfRadianceActive" class="result-section-title">通用乘区</h3>
+    <p v-else class="result-subtotal">蕾米埃尔本人耀变不使用通用乘区，异常基础见下方公式。</p>
+    <div v-if="!calcParts.remielSelfRadianceActive" class="formula-block formula-block--aligned">
       <div class="formula-aligned-group">
         <span class="formula-label formula-aligned-title">{{ alignedGeneralFormula.title }}</span>
         <div class="formula-aligned-body">
@@ -1052,14 +1436,14 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         </div>
       </div>
     </div>
-    <div class="result-grid">
+    <div v-if="!calcParts.remielSelfRadianceActive" class="result-grid">
       <p>基础伤害（局内）：<StatValueWithSources :value="calcParts.baseDamage" :groups="valueTips.baseDamage" /></p>
       <p>增伤区：<StatValueWithSources :value="calcParts.dmgMultiplier" :groups="valueTips.dmgMultiplier" /></p>
       <p>防御区：<StatValueWithSources :value="calcParts.defenseMultiplier" :groups="valueTips.defenseMultiplier" /></p>
       <p>抗性区：<StatValueWithSources :value="calcParts.resistanceMultiplier" :groups="valueTips.resistanceMultiplier" /></p>
-      <p>易伤区（含增益）：<StatValueWithSources :value="calcParts.vulnerableMultiplier" :groups="valueTips.vulnerableMultiplier" /></p>
+      <p>易伤区（含增益）：<StatValueWithSources :value="formatFormulaNumber(displayVulnerableMultiplier)" :groups="valueTips.vulnerableMultiplier" /></p>
       <p>失衡易伤区（含增益）：<StatValueWithSources :value="calcParts.staggerMultiplier" :groups="valueTips.staggerMultiplier" /></p>
-      <p class="result-subtotal">通用乘区：<StatValueWithSources :value="Math.round(calcParts.generalMultiplier).toLocaleString('en-US')" :groups="valueTips.generalMultiplier" /></p>
+      <p class="result-subtotal">通用乘区：<StatValueWithSources :value="formatFormulaNumber(calcParts.generalMultiplier, 2)" :groups="valueTips.generalMultiplier" /></p>
     </div>
 
     <template v-if="show === 'direct'">
@@ -1173,18 +1557,34 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         <p class="result-total">乱流伤害（暴击率=1）：<StatValueWithSources :value="formatNumber(calcParts.turbulenceExpectedFullCrit)" :groups="valueTips.turbulenceExpected" /></p>
         </template>
 
-        <template v-else>
+        <template v-else-if="anomalySubKind === 'anomalyRelease'">
         <h4 class="result-subsection-title">异放伤害</h4>
         <p>
-          异放综合增伤区：{{ formatFormulaNumber(calcParts.anomalyReleaseCombinedDmgBonusZone) }}
+          异放综合增伤区：
+          <StatValueWithSources
+            :value="formatFormulaNumber(calcParts.anomalyReleaseCombinedDmgBonusZone)"
+            :groups="valueTips.anomalyReleaseCombinedDmgBonusZone"
+          />
         </p>
-        <p>异放倍率区：{{ formatFormulaNumber(calcParts.anomalyReleaseMultZone) }}</p>
+        <p>
+          异放倍率区：
+          <StatValueWithSources
+            :value="formatFormulaNumber(calcParts.anomalyReleaseMultZone)"
+            :groups="valueTips.anomalyReleaseMultZone"
+          />
+        </p>
         <p>
           异常综合暴击区公式：1 + ({{ formatFormulaNumber(calcParts.anomalyCombinedCritRateRatio) }})
           × ({{ formatFormulaNumber(calcParts.anomalyCombinedCritDmgRatio) }})
         </p>
         <p>异常综合暴击区（暴击率=0）：1</p>
-        <p>异常综合暴击区（暴击率=1）：{{ formatFormulaNumber(calcParts.anomalyCombinedFullCritZone) }}</p>
+        <p>
+          异常综合暴击区（暴击率=1）：
+          <StatValueWithSources
+            :value="formatFormulaNumber(calcParts.anomalyCombinedFullCritZone)"
+            :groups="valueTips.anomalyCombinedCritZone"
+          />
+        </p>
         <p class="result-total">
           异放伤害（暴击率=0）：
           <StatValueWithSources
@@ -1197,6 +1597,31 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
           <StatValueWithSources
             :value="formatNumber(calcParts.anomalyReleaseExpectedFullCrit)"
             :groups="valueTips.anomalyReleaseExpected"
+          />
+        </p>
+        </template>
+
+        <template v-else-if="anomalySubKind === 'radiance'">
+        <h4 class="result-subsection-title">耀变伤害</h4>
+        <p>
+          耀变综合增伤区：
+          <StatValueWithSources
+            :value="formatFormulaNumber(calcParts.radianceCombinedDmgBonusZone)"
+            :groups="valueTips.radianceCombinedDmgBonusZone"
+          />
+        </p>
+        <p>
+          耀变倍率区：
+          <StatValueWithSources
+            :value="formatFormulaNumber(calcParts.radianceMultZone)"
+            :groups="valueTips.radianceMultZone"
+          />
+        </p>
+        <p class="result-total">
+          耀变期望伤害：
+          <StatValueWithSources
+            :value="formatNumber(calcParts.radianceExpected)"
+            :groups="valueTips.radianceExpected"
           />
         </p>
         </template>

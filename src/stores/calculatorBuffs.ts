@@ -1,15 +1,18 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import {
   deleteAgentBuff,
   deleteBangbooBuff,
   deleteDriveDiscBuff,
   deleteDamageEventMode,
   deleteFollowUpSkillRule,
+  deletePresetSkill,
   deleteSkillSubcategory,
   deleteWengineBuff,
   fetchCalculatorBuffs,
   fetchDamageEventModes,
+  fetchPresetSkills,
+  savePresetSkill,
   saveAgentBuff,
   saveBangbooBuff,
   saveDamageEventMode,
@@ -27,6 +30,7 @@ import type {
   DamageEventMode,
   DriveDiscBuffDoc,
   FollowUpSkillRule,
+  Skill,
   SkillCategoryId,
   SkillSubcategory,
   SupportStatNeed,
@@ -36,9 +40,18 @@ import {
   normalizeSkillSubcategoryMultFields,
 } from '@/utils/skillSubcategoryMult'
 import {
+  bakeFollowUpSkillTypesOnce,
+  loadCustomSkills,
+  migrateLegacyModesToSkills,
+  removeCustomSkill,
+  upsertCustomSkill,
+} from '@/utils/skillLibrary'
+import { mergePublicAnomalyPresets } from '@/utils/publicAnomalySkills'
+import {
   AGENT_MINDSCAPE_RANKS,
   createEmptyMindscapeBuffs,
   createEmptyRefinementMods,
+  defaultDisorderStats,
   defaultTurbulenceStats,
   normalizeAgentBasePanel,
   normalizeBuffStatModifiers,
@@ -131,12 +144,34 @@ function normalizeAgent(item: Record<string, unknown>): AgentBuffDoc {
   let basePanel = normalizeAgentBasePanel(rawBase)
   if (rawBase && typeof rawBase === 'object' && !Array.isArray(rawBase)) {
     const entry = rawBase as Record<string, unknown>
+    const disorder = defaultDisorderStats(element, id)
     const turbulence = defaultTurbulenceStats(element, id)
+    if (entry.disorderBaseMult == null) {
+      basePanel = { ...basePanel, disorderBaseMult: disorder.disorderBaseMult }
+    }
+    if (entry.anomalyDuration == null || Number(entry.anomalyDuration) === 0) {
+      basePanel = { ...basePanel, anomalyDuration: disorder.anomalyDuration }
+    }
+    if (entry.disorderCompMult == null) {
+      basePanel = { ...basePanel, disorderCompMult: disorder.disorderCompMult }
+    }
     if (entry.turbulenceBaseMult == null) {
       basePanel = { ...basePanel, turbulenceBaseMult: turbulence.turbulenceBaseMult }
     }
     if (entry.turbulenceCompMult == null) {
       basePanel = { ...basePanel, turbulenceCompMult: turbulence.turbulenceCompMult }
+    }
+  } else {
+    // 无 basePanel 时也按属性补默认异常时间 / 乱流补偿，避免全 0
+    const disorder = defaultDisorderStats(element, id)
+    const turbulence = defaultTurbulenceStats(element, id)
+    basePanel = {
+      ...basePanel,
+      disorderBaseMult: disorder.disorderBaseMult,
+      anomalyDuration: disorder.anomalyDuration,
+      disorderCompMult: disorder.disorderCompMult,
+      turbulenceBaseMult: turbulence.turbulenceBaseMult,
+      turbulenceCompMult: turbulence.turbulenceCompMult,
     }
   }
   return {
@@ -397,6 +432,9 @@ export const useCalculatorBuffStore = defineStore('calculatorBuffs', () => {
   const skillSubcategories = ref<SkillSubcategory[]>([])
   const followUpSkillRules = ref<FollowUpSkillRule[]>([])
   const damageEventModes = ref<DamageEventMode[]>([])
+  /** 招式库：预设来自后端，自定义来自浏览器，对外合成一份 */
+  const presetSkills = ref<Skill[]>([])
+  const customSkills = ref<Skill[]>([])
   const loading = ref(true)
   const loaded = ref(false)
   const error = ref('')
@@ -484,6 +522,20 @@ export const useCalculatorBuffStore = defineStore('calculatorBuffs', () => {
         } catch {
           damageEventModes.value = []
         }
+        try {
+          presetSkills.value = mergePublicAnomalyPresets(await fetchPresetSkills())
+        } catch {
+          presetSkills.value = mergePublicAnomalyPresets([])
+        }
+        // 小类名要用来给迁移出的招式起名，故排在小类加载之后
+        migrateLegacyModesToSkills({
+          subcategories: skillSubcategories.value,
+          followUpSkillRules: followUpSkillRules.value,
+        })
+        customSkills.value = bakeFollowUpSkillTypesOnce(
+          skillSubcategories.value,
+          followUpSkillRules.value,
+        )
         loaded.value = true
         error.value = ''
       } catch (err) {
@@ -570,6 +622,57 @@ export const useCalculatorBuffStore = defineStore('calculatorBuffs', () => {
     skillSubcategories.value = skillSubcategories.value.filter((item) => item.id !== id)
   }
 
+  // ===================== 招式库 =====================
+
+  /** 预设在前、自定义在后；同一 id 不会跨来源重复 */
+  const skills = computed<Skill[]>(() => [...presetSkills.value, ...customSkills.value])
+
+  function findSkill(id: string): Skill | null {
+    return skills.value.find((item) => item.id === id) ?? null
+  }
+
+  /** 招式库对某角色可见的部分：该角色专属 + 公共（有 element 的只给同属性；属性未知时不藏） */
+  function skillsForAgent(agentId: string, elementHint?: string): Skill[] {
+    const element = (
+      elementHint ||
+      agents.value.find((item) => item.id === agentId)?.element ||
+      ''
+    ).trim()
+    return skills.value.filter((item) => {
+      if (item.agentId) return item.agentId === agentId
+      const skillEl = String(item.element ?? '').trim()
+      if (!skillEl) return true
+      if (!element) return true
+      return skillEl === element
+    })
+  }
+
+  async function upsertPresetSkillDoc(doc: Skill) {
+    const saved = await savePresetSkill(doc)
+    const index = presetSkills.value.findIndex((item) => item.id === saved.id)
+    if (index >= 0) presetSkills.value[index] = saved
+    else presetSkills.value.push(saved)
+    return saved
+  }
+
+  async function removePresetSkillDoc(id: string) {
+    await deletePresetSkill(id)
+    presetSkills.value = presetSkills.value.filter((item) => item.id !== id)
+  }
+
+  function upsertCustomSkillDoc(doc: Skill) {
+    customSkills.value = upsertCustomSkill(doc)
+    return doc
+  }
+
+  function removeCustomSkillDoc(id: string) {
+    customSkills.value = removeCustomSkill(id)
+  }
+
+  function reloadCustomSkillsFromStorage() {
+    customSkills.value = loadCustomSkills()
+  }
+
   async function upsertFollowUpSkillRuleDoc(doc: FollowUpSkillRule) {
     const saved = await saveFollowUpSkillRule(doc)
     const normalized = normalizeFollowUpSkillRule(saved as unknown as Record<string, unknown>)
@@ -615,6 +718,16 @@ export const useCalculatorBuffStore = defineStore('calculatorBuffs', () => {
     skillSubcategories,
     followUpSkillRules,
     damageEventModes,
+    presetSkills,
+    customSkills,
+    skills,
+    findSkill,
+    skillsForAgent,
+    upsertPresetSkillDoc,
+    removePresetSkillDoc,
+    upsertCustomSkillDoc,
+    removeCustomSkillDoc,
+    reloadCustomSkillsFromStorage,
     loading,
     loaded,
     error,

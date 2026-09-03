@@ -15,8 +15,8 @@ import {
 } from '@/utils/buffEffect'
 import { normalizeBuffMultFactorDelta } from '@/utils/multFactorPercent'
 
-export const AGENT_ROLES = ['强攻', '击破', '异常', '支援', '防护', '命破'] as const
-export const AGENT_ELEMENTS = ['风', '火', '电', '物理', '以太', '冰', '流明'] as const
+export const AGENT_ROLES = ['强攻', '击破', '异常', '支援', '防护', '命破', '锋御'] as const
+export const AGENT_ELEMENTS = ['风', '火', '电', '物理', '以太', '冰', '霜', '流明'] as const
 export const WENGINE_RARITIES = ['S', 'A', 'B'] as const
 export type WengineRarity = (typeof WENGINE_RARITIES)[number]
 
@@ -135,12 +135,47 @@ export const BUFF_STAT_FIELDS: {
     unit: 'flat',
     hint: '固定数值直接累加；能量回复请优先用上方百分比字段',
   },
-  { key: 'vulnerable', label: '易伤', unit: 'percent', hint: '独立易伤区，常驻加算（如 1.5 + 30% = 1.8）' },
+  {
+    key: 'vulnerable',
+    label: '易伤',
+    unit: 'percent',
+    hint: '全伤害类型；与直伤/非直伤易伤加算进同一易伤区（如 1 + 30% = 1.3）',
+  },
+  {
+    key: 'directVulnerable',
+    label: '直伤易伤',
+    unit: 'percent',
+    hint: '仅直伤；与通用易伤加算进直伤易伤区',
+  },
+  {
+    key: 'anomalyVulnerable',
+    label: '非直伤易伤',
+    unit: 'percent',
+    hint: '仅异常类（异常/紊乱/乱流/异放/耀变）；与通用易伤加算进非直伤易伤区',
+  },
+  {
+    key: 'dmgReduction',
+    label: '减伤',
+    unit: 'percent',
+    hint: '全伤害类型；从易伤区加算扣减（1 + 易伤% − 减伤%）',
+  },
+  {
+    key: 'directDmgReduction',
+    label: '直伤减伤',
+    unit: 'percent',
+    hint: '仅直伤；从直伤易伤区加算扣减',
+  },
+  {
+    key: 'anomalyDmgReduction',
+    label: '非直伤减伤',
+    unit: 'percent',
+    hint: '仅异常类；从非直伤易伤区加算扣减',
+  },
   {
     key: 'globalStaggerVulnerable',
     label: '全局失衡易伤',
     unit: 'percent',
-    hint: '失衡期与非失衡期均生效',
+    hint: '失衡期与非失衡期均生效；非失衡期失衡易伤区 = 100% + 本值',
   },
   {
     key: 'staggerVulnerable',
@@ -209,7 +244,7 @@ export const BUFF_STAT_FIELDS: {
     key: 'anomalyDuration',
     label: '异常持续时间',
     unit: 'flat',
-    hint: '秒；火/以太计算时有效时间 = 持续时间 ÷ 0.5',
+    hint: '秒；火/以太先 ÷ 0.5 再向下取整；其他属性直接向下取整秒数',
   },
   {
     key: 'disorderCompMult',
@@ -303,6 +338,18 @@ export const BUFF_STAT_FIELDS: {
     hint: '独立乘区，仅当直伤基础来源为贯穿力时生效，不进增伤区',
   },
   {
+    key: 'sharpenCritDmgBonus',
+    label: '锐爆伤害加成',
+    unit: 'percent',
+    hint: '仅锐化：锐爆伤害 B = 120% + 本值；替换常规暴伤区',
+  },
+  {
+    key: 'dmgPenalty',
+    label: '弱伤',
+    unit: 'percent',
+    hint: '直伤/命破/锐化增伤区扣减：1 + 增伤% − 弱伤%；不进异常链',
+  },
+  {
     key: 'anomalyReleaseDmgBonus',
     label: '异放增伤',
     unit: 'percent',
@@ -357,9 +404,10 @@ export const SKILL_BUFF_STAT_FIELDS = BUFF_STAT_FIELDS.filter((field) =>
   SKILL_BUFF_STAT_KEYS.includes(field.key),
 )
 
-/** 异常倍率% 按属性默认值 */
+/** 角色面板异常倍率% 默认值（与公共招式 baseMult 同一套数字，招式侧不再额外乘） */
 export const ANOMALY_MULT_BY_ELEMENT: Record<AgentElement, number> = {
   冰: 500,
+  霜: 500,
   物理: 713,
   火: 50,
   电: 125,
@@ -383,6 +431,7 @@ export function defaultDisorderCompMultByElement(element: string, agentIdOrName 
   const disorderCompByElement: Record<string, number> = {
     物理: 7.5,
     冰: 7.5,
+    霜: 7.5,
     火: 50,
     电: 125,
     以太: 62.5,
@@ -429,6 +478,7 @@ export function defaultTurbulenceStats(
   const turbulenceBaseByElement: Record<string, number> = {
     物理: 800,
     冰: 1300,
+    霜: 1300,
     火: 900,
     电: 650,
     以太: 650,
@@ -439,10 +489,14 @@ export function defaultTurbulenceStats(
   }
 }
 
-/** 火/以太计算时异常持续时间 ÷ 0.5 */
+/**
+ * 紊乱/乱流有效持续时间：先按属性换算（火/以太 ÷ 0.5），再向下取整。
+ * 与对照站 ⌊t⌋ / ⌊t/0.5⌋ 口径一致。
+ */
 export function effectiveAnomalyDuration(duration: number, element: string): number {
-  if (element === '火' || element === '以太') return duration / 0.5
-  return duration
+  const safe = Number.isFinite(duration) ? Math.max(0, duration) : 0
+  if (element === '火' || element === '以太') return Math.floor(safe / 0.5)
+  return Math.floor(safe)
 }
 
 export function buffStatFieldLabel(field: (typeof BUFF_STAT_FIELDS)[number]) {
@@ -506,7 +560,14 @@ export function createEmptyBuffStatModifiers(): BuffStatModifiers {
     energyRegenFlat: 0,
     pierce: 0,
     pierceDmgBonus: 0,
+    sharpenCritDmgBonus: 0,
+    dmgPenalty: 0,
     vulnerable: 0,
+    directVulnerable: 0,
+    anomalyVulnerable: 0,
+    dmgReduction: 0,
+    directDmgReduction: 0,
+    anomalyDmgReduction: 0,
     globalStaggerVulnerable: 0,
     staggerVulnerable: 0,
     staggerVulnerableOnly: 0,
@@ -897,6 +958,7 @@ export function roleShort(role: string) {
     支援: '援',
     防护: '防',
     命破: '命',
+    锋御: '锋',
   }
   return map[role] ?? role.slice(0, 1)
 }
@@ -909,6 +971,8 @@ export function elementShort(element: string) {
     物理: '物',
     以太: '以',
     冰: '冰',
+    霜: '霜',
+    流明: '流',
   }
   return map[element] ?? element.slice(0, 1)
 }

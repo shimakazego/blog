@@ -2,7 +2,10 @@ import type { SkillSubcategory } from '@/types/calculator'
 import type { PanelStats } from '@/types/calculatorPanel'
 import type { DamageCalcResult } from '@/utils/damageCalc'
 import { multFactorPercentToRatio } from '@/utils/multFactorPercent'
-import { normalizeSkillSubcategoryMultFields } from '@/utils/skillSubcategoryMult'
+import {
+  normalizeSkillSubcategoryMultFields,
+  unsetSkillMult,
+} from '@/utils/skillSubcategoryMult'
 
 export interface DirectFormulaTerm {
   label: string
@@ -23,6 +26,7 @@ export interface AlignedDirectFormulaGroup {
 export function computeDirectBaseChain(p: DamageCalcResult): number {
   return (
     p.generalMultiplier *
+    Math.max(0, p.directVulnerableMultiplier) *
     p.critMultiplier *
     Math.max(0, p.specialMultiplier) *
     Math.max(0, p.pierceDmgMultiplier)
@@ -32,6 +36,7 @@ export function computeDirectBaseChain(p: DamageCalcResult): number {
 export function buildDirectBaseChainFactorLabels(p: DamageCalcResult): string[] {
   const parts = [
     String(p.generalMultiplier),
+    String(p.directVulnerableMultiplier),
     String(p.critMultiplier),
     String(p.specialMultiplier),
   ]
@@ -52,6 +57,11 @@ export function buildAlignedDirectFormulaGroup(
       label: '通用乘区',
       value: formatFormulaNumber(p.generalMultiplier, 2),
       tipsKey: 'generalMultiplier',
+    },
+    {
+      label: '直伤易伤区',
+      value: formatFormulaNumber(p.directVulnerableMultiplier),
+      tipsKey: 'directVulnerableMultiplier',
     },
     { label: '暴击区', value: formatFormulaNumber(p.critMultiplier), tipsKey: 'critMultiplier' },
     {
@@ -114,7 +124,10 @@ export function formatDirectDmgMultZoneFormula(
   if (skillSubcategory) {
     const sub = normalizeSkillSubcategoryMultFields(skillSubcategory)
     const subFactor = readPanelFactor(sub.directDmgMultFactor)
-    return `直伤倍率区 max(0, ${sub.directDmgMult}%) × 小类修正 ${subFactor} × 直伤倍率修正 ${panelFactor} = ${zone}`
+    const directMult = unsetSkillMult(sub.directDmgMult)
+      ? panel.directDmgMult
+      : sub.directDmgMult
+    return `直伤倍率区 max(0, ${directMult}%) × 小类修正 ${subFactor} × 直伤倍率修正 ${panelFactor} = ${zone}`
   }
   return `直伤倍率区 max(0, ${panel.directDmgMult}%) × 直伤倍率修正 ${panelFactor} = ${zone}`
 }

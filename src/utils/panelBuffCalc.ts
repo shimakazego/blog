@@ -12,7 +12,11 @@ import type {
   SkillCategoryId,
   WengineBuffDoc,
 } from '@/types/calculator'
-import { createDefaultExternalPanel, type PanelStats } from '@/types/calculatorPanel'
+import {
+  createDefaultExternalPanel,
+  fillPanelStatsDefaults,
+  type PanelStats,
+} from '@/types/calculatorPanel'
 import { combineMultFactorPercent } from '@/utils/multFactorPercent'
 import {
   cloneEffectInstance,
@@ -35,7 +39,11 @@ import {
   mergeBuffStatModifiers,
 } from '@/utils/calculatorUi'
 import type { EnvironmentBuffEntry } from '@/utils/environmentBuffCalc'
-import { extraGainMatchesProfession } from '@/utils/extraBuffCalc'
+import { resolveAssetUrl } from '@/utils/gameData'
+import {
+  mergeExtraModsForEvent,
+  type ExtraBuffGain,
+} from '@/utils/extraBuffCalc'
 
 function flattenBlocks(blocks: { effects?: BuffEffect[] }[]): BuffEffect[] {
   return blocks.flatMap((block) => block.effects ?? [])
@@ -56,8 +64,13 @@ function mergeBuffDisplayNotes(...parts: Array<string | null | undefined>): stri
   return unique.join('\n')
 }
 
-/** 危局 / Boss 场地 / 防线 Buff 分组 */
-export const ENVIRONMENT_BUFF_GROUPS = new Set(['危局 Buff', 'Boss 场地 Buff', '防线 Buff'])
+/** 危局 / Boss 场地 / 防线 / 临界 Buff 分组 */
+export const ENVIRONMENT_BUFF_GROUPS = new Set([
+  '危局 Buff',
+  'Boss 场地 Buff',
+  '防线 Buff',
+  '临界 Buff',
+])
 
 export function isEnvironmentBuffGroup(group: string) {
   return ENVIRONMENT_BUFF_GROUPS.has(group)
@@ -67,8 +80,41 @@ export function isEnvironmentBuffSourceKey(sourceKey: string) {
   return (
     sourceKey.startsWith('crisis-buff-') ||
     sourceKey.startsWith('boss-field-') ||
-    sourceKey.startsWith('defense-buff-')
+    sourceKey.startsWith('defense-buff-') ||
+    sourceKey.startsWith('deduction-buff-') ||
+    sourceKey.startsWith('deduction-field-')
   )
+}
+
+function isBossFieldEnvironmentKind(kind: import('@/utils/environmentBuffCalc').EnvironmentBuffKind) {
+  return kind === 'boss-field' || kind === 'deduction-field'
+}
+
+function environmentBuffKindLabel(
+  kind: import('@/utils/environmentBuffCalc').EnvironmentBuffKind,
+): string {
+  if (kind === 'crisis') return '危局 Buff'
+  if (isBossFieldEnvironmentKind(kind)) return 'Boss 场地 Buff'
+  if (kind === 'deduction-node') return '临界 Buff'
+  return '防线 Buff'
+}
+
+function mapEnvBuffBlockDisplayName(
+  env: EnvironmentBuffEntry,
+  block: { name?: string },
+): string {
+  if (isBossFieldEnvironmentKind(env.kind)) return '场地 Buff'
+  if (env.kind === 'defense-room' && env.roomIndex != null) {
+    return `第${env.roomIndex}间`
+  }
+  if (env.kind === 'deduction-node' && env.nodeLabel) {
+    const blockName = block.name?.trim() || ''
+    if (blockName && blockName !== env.name) {
+      return `${env.nodeLabel} · ${blockName}`
+    }
+    return env.nodeLabel
+  }
+  return block.name?.trim() || '增益'
 }
 
 /** 2 件套：优先按效果块（保留名称/注释），否则回退扁平效果 */
@@ -386,20 +432,20 @@ export function mergeDefaultBuffSelectionIntoMulti(
   const effectById = new Map(effects.map((item) => [item.effect.id, item.effect]))
   const validIds = new Set(effectById.keys())
 
-  for (const store of [multi.team, ...Object.values(multi.bySlot)]) {
-    for (const id of Object.keys(store.enabledIds)) {
-      if (!validIds.has(id)) delete store.enabledIds[id]
-    }
-    for (const id of Object.keys(store.stacksByEffectId)) {
-      if (!validIds.has(id)) delete store.stacksByEffectId[id]
-    }
-    for (const id of Object.keys(store.convertInputs)) {
-      if (!validIds.has(id)) delete store.convertInputs[id]
-    }
-    if (store.manualTouchedIds) {
-      for (const id of Object.keys(store.manualTouchedIds)) {
-        if (!validIds.has(id)) delete store.manualTouchedIds[id]
-      }
+  // 只清理本槽自身勾选：全队 store 与其它槽不能按「当前主视角 effects」剪枝，否则换人/改影画会误删
+  const selfStore = ensureSlotSelfBuffSelection(multi, slotIndex)
+  for (const id of Object.keys(selfStore.enabledIds)) {
+    if (!validIds.has(id)) delete selfStore.enabledIds[id]
+  }
+  for (const id of Object.keys(selfStore.stacksByEffectId)) {
+    if (!validIds.has(id)) delete selfStore.stacksByEffectId[id]
+  }
+  for (const id of Object.keys(selfStore.convertInputs)) {
+    if (!validIds.has(id)) delete selfStore.convertInputs[id]
+  }
+  if (selfStore.manualTouchedIds) {
+    for (const id of Object.keys(selfStore.manualTouchedIds)) {
+      if (!validIds.has(id)) delete selfStore.manualTouchedIds[id]
     }
   }
 
@@ -479,19 +525,32 @@ export interface PanelCalcContext {
   wengines: WengineBuffDoc[]
   bangboo: BangbooBuffDoc
   bangbooRefine: number
+  /** 当前正在汇总面板的槽位（自身 / 队友 的「自身」） */
   mainSlotIndex: number
   driveDiscs: DriveDiscBuffDoc[]
   extraMods?: BuffStatModifiers
+  /**
+   * 额外 Buff 条目。转模按来源槽位取局内时，必须按该槽重算，
+   * 不能把当前结算角色的 extraMods 整包套到蕾米等人身上。
+   */
+  extraGains?: ExtraBuffGain[]
   skillContext?: SkillCalcContext | null
   buffSelection?: BuffSelectionState | null
   attrValues?: Partial<Record<CharacterAttrKey, number>>
   panelSourceValues?: PanelSourceValues
-  /** 主 C 局外面板（按槽位转模时用于主槽位） */
+  /** 正在编辑局外面板的槽位（编队点选的「编辑中」）；live 面板跟这个人走 */
+  liveExternalSlotIndex?: number
+  /** 正在编辑的那份局外面板（live） */
   mainExternalPanel?: PanelStats
   /** 异常产生角色局外面板 */
   anomalySlotPanels?: Record<string, PanelStats>
   /** 转模增益角色局外面板（仅转模来源属性） */
   convertSlotPanels?: ConvertSlotPanels
+  /**
+   * 各槽位完整局外。词条模式由该槽词条+驱动盘算出，面板模式为该槽手填值。
+   * 全队转模必须按来源槽位取这里，不能拿编辑中角色的面板去套队友。
+   */
+  slotExternalPanels?: Record<number, PanelStats>
   /** 各槽位局外/局内转模取值（按 effect 来源槽位解析） */
   panelSourceValuesBySlot?: Map<number, PanelSourceValues>
   /** 异常掌控% 的换算基数；缺省时取结算角色基础面板的初始异常掌控 */
@@ -557,9 +616,11 @@ export function applyConvertPartialToExternalPanel(
   }
 }
 
-function resolveTeamMainSlotIndex(ctx: PanelCalcContext): number {
-  const idx = ctx.teamSlots.findIndex((slot) => slot.isMainC)
-  return idx >= 0 ? idx : ctx.mainSlotIndex
+function resolveLiveExternalSlotIndex(ctx: PanelCalcContext): number {
+  if (ctx.liveExternalSlotIndex != null && ctx.liveExternalSlotIndex >= 0) {
+    return ctx.liveExternalSlotIndex
+  }
+  return ctx.mainSlotIndex
 }
 
 function resolveExternalPanelForSlot(
@@ -567,17 +628,21 @@ function resolveExternalPanelForSlot(
   ctx: PanelCalcContext,
   currentSlotExternalPanel: PanelStats,
 ): PanelStats {
-  const teamMainIndex = resolveTeamMainSlotIndex(ctx)
-  if (slotIndex === teamMainIndex && ctx.mainExternalPanel) {
-    return ctx.mainExternalPanel
+  const liveIndex = resolveLiveExternalSlotIndex(ctx)
+  if (slotIndex === liveIndex && ctx.mainExternalPanel) {
+    return fillPanelStatsDefaults(ctx.mainExternalPanel)
+  }
+  const mapped = ctx.slotExternalPanels?.[slotIndex]
+  if (mapped) {
+    return fillPanelStatsDefaults(mapped)
   }
   if (slotIndex === ctx.mainSlotIndex) {
-    return currentSlotExternalPanel
+    return fillPanelStatsDefaults(currentSlotExternalPanel)
   }
   const agentId = ctx.teamSlots[slotIndex]?.agentId
   if (!agentId) return createDefaultExternalPanel()
   const anomaly = ctx.anomalySlotPanels?.[agentId]
-  if (anomaly) return { ...anomaly }
+  if (anomaly) return fillPanelStatsDefaults(anomaly)
   const convertPartial = ctx.convertSlotPanels?.[agentId]
   if (convertPartial) {
     return convertSlotPartialToExternalPanel(convertPartial)
@@ -650,6 +715,21 @@ export function buildPanelSourceValuesBySlotRecord(
   return Object.fromEntries(buildAllPanelSourceValuesBySlot(ctx, currentSlotExternalPanel).entries())
 }
 
+/** 该槽位装备/影画是否含局外或局内转模（不论当前是否勾选，供顶栏标记） */
+export function slotHasPanelConvertEffect(
+  ctx: PanelCalcContext,
+  slotIndex: number,
+): boolean {
+  for (const item of collectAllBuffEffects(ctx)) {
+    const effect = item.effect
+    if (effect.kind !== 'convert' || !effect.convert) continue
+    if ((effect.convert.panelSource ?? 'external') === 'manual') continue
+    const idx = parseSourceKeySlotIndex(item.sourceKey)
+    if (idx === slotIndex) return true
+  }
+  return false
+}
+
 /** 该槽位是否存在启用的局外/局内转模（非自行设置） */
 export function slotParticipatesInConvertBuff(
   ctx: PanelCalcContext,
@@ -664,6 +744,77 @@ export function slotParticipatesInConvertBuff(
     if (idx === slotIndex) return true
   }
   return false
+}
+
+export type ConvertSourceMark = {
+  attr: CharacterAttrKey
+  panelSource: 'external' | 'final'
+}
+
+/** 转模来源属性中不在常规面板网格上的（冲击力、等级等） */
+export const CONVERT_SOURCE_ATTRS_OFF_PANEL: readonly CharacterAttrKey[] = ['impact', 'level']
+
+/** 当前槽位作为转模来源时，涉及哪些属性、读局外还是局内 */
+export function collectConvertSourceMarksForSlot(
+  ctx: PanelCalcContext,
+  slotIndex: number,
+  options?: { requireEnabled?: boolean },
+): ConvertSourceMark[] {
+  const requireEnabled = options?.requireEnabled !== false
+  const marks = new Map<string, ConvertSourceMark>()
+  for (const item of collectAllBuffEffects(ctx)) {
+    const effect = item.effect
+    if (effect.kind !== 'convert' || !effect.convert) continue
+    const source = effect.convert.panelSource ?? 'external'
+    if (source !== 'external' && source !== 'final') continue
+    if (requireEnabled && !isEffectEnabled(effect, ctx.buffSelection)) continue
+    if (parseSourceKeySlotIndex(item.sourceKey) !== slotIndex) continue
+    const key = `${source}:${effect.convert.from}`
+    if (!marks.has(key)) {
+      marks.set(key, { attr: effect.convert.from, panelSource: source })
+    }
+  }
+  return [...marks.values()]
+}
+
+export function convertSourceAttrSet(
+  marks: ConvertSourceMark[],
+  panelSource: 'external' | 'final',
+): Set<CharacterAttrKey> {
+  return new Set(marks.filter((item) => item.panelSource === panelSource).map((item) => item.attr))
+}
+
+export function convertSourceAttrMatchesPanelSlot(
+  attr: CharacterAttrKey,
+  slot: { kind?: string; key?: string; id?: string },
+): boolean {
+  if (attr === 'pierce') {
+    return slot.kind === 'pierce' || slot.id === 'pierce' || slot.key === 'pierce'
+  }
+  if (CONVERT_SOURCE_ATTRS_OFF_PANEL.includes(attr)) return false
+  return slot.key === attr || slot.id === attr
+}
+
+export function panelSlotUsesConvertSource(
+  slot: { kind?: string; key?: string; id?: string },
+  attrs: Set<CharacterAttrKey>,
+): boolean {
+  for (const attr of attrs) {
+    if (convertSourceAttrMatchesPanelSlot(attr, slot)) return true
+  }
+  return false
+}
+
+export function externalConvertFieldClass(
+  field: { kind?: string; key?: string; id?: string },
+  attrs: { external: Set<CharacterAttrKey>; final: Set<CharacterAttrKey> },
+) {
+  const usesExternal = panelSlotUsesConvertSource(field, attrs.external)
+  const usesFinal = panelSlotUsesConvertSource(field, attrs.final)
+  return {
+    'is-convert-source': usesExternal,
+    'is-convert-source-via-final': !usesExternal && usesFinal,
+  }
 }
 
 /** 队伍是否存在需录入面板的转模增益角色 */
@@ -752,11 +903,18 @@ export function resolveBaseEnergyRegen(ctx: PanelCalcContext): number {
 
 export interface CombatBuffMods {
   vulnerable: number
+  directVulnerable: number
+  anomalyVulnerable: number
+  dmgReduction: number
+  directDmgReduction: number
+  anomalyDmgReduction: number
   globalStaggerVulnerable: number
   staggerVulnerable: number
   staggerVulnerableOnly: number
   special: number
   pierceDmgBonus: number
+  sharpenCritDmgBonus: number
+  dmgPenalty: number
 }
 
 export interface PanelBuffBreakdown {
@@ -765,6 +923,10 @@ export interface PanelBuffBreakdown {
   finalPanel: PanelStats
   sources: BuffModSource[]
   collectedEffects: CollectedEffect[]
+}
+
+export interface ComputeFinalPanelOptions {
+  includeDetails?: boolean
 }
 
 export interface BuffModSource {
@@ -802,7 +964,9 @@ function defaultSkillContext(
     damageKind,
     categoryId: 'basic',
     subcategoryId: null,
+    coords: [],
     element,
+    isFollowUp: false,
   }
 }
 
@@ -815,6 +979,25 @@ function resolveBeneficiaryElement(ctx: PanelCalcContext): string | undefined {
 
 function resolveTeamProfessionCountOption(ctx: PanelCalcContext) {
   return (profession: string) => countTeamProfession(ctx.teamSlots, ctx.agents, profession)
+}
+
+/** 额外 Buff 按当前 mainSlotIndex 取值；有 extraGains 时不复用别人的 extraMods */
+function resolveContextExtraMods(ctx: PanelCalcContext): BuffStatModifiers {
+  if (ctx.extraGains?.length) {
+    const slotIndex = ctx.mainSlotIndex
+    const slotAgentId = ctx.teamSlots[slotIndex]?.agentId ?? ''
+    const skillCtx = ctx.skillContext ?? defaultSkillContext('direct')
+    return mergeExtraModsForEvent(ctx.extraGains, skillCtx, {
+      slotIndex,
+      slotAgentId,
+      staggerPhase: skillCtx.staggerPhase ?? 'stagger',
+      resolveAgentProfession: (agentId) =>
+        ctx.agents.find((item) => item.id === agentId)?.profession,
+      teamSlots: ctx.teamSlots,
+      agents: ctx.agents,
+    })
+  }
+  return ctx.extraMods ?? createEmptyBuffStatModifiers()
 }
 
 function resolvePackMods(
@@ -832,11 +1015,15 @@ function resolvePackMods(
     slotIndex != null
       ? ctx.agents.find((item) => item.id === ctx.teamSlots[slotIndex]?.agentId)?.element
       : undefined
+  const beneficiaryProfession = ctx.agents.find(
+    (item) => item.id === ctx.teamSlots[ctx.mainSlotIndex]?.agentId,
+  )?.profession
   return resolveEffectsToMods(effects, {
     applyTargets: isMain ? ['self', 'team'] : ['team'],
     ctx: skillCtx,
     element: isMain ? skillCtx.element : slotElement,
     beneficiaryElement: resolveBeneficiaryElement(ctx),
+    beneficiaryProfession,
     stacksByEffectId: ctx.buffSelection?.stacksByEffectId,
     convertInputs: ctx.buffSelection?.convertInputs,
     attrValues: ctx.attrValues,
@@ -877,7 +1064,7 @@ export function collectSlotDriveDiscEffects(
   }
 
   if (isMain) {
-    // 主 C：4 件套含其 2 件效果；另选的 2 件套也计入
+    // 当前结算角色：4 件套含其 2 件效果；另选的 2 件套也计入
     if (fourDisc) {
       pushTwoPiece(fourDisc)
       effects.push(...collectEffectsFromPack(fourDisc.fourPieceBuffs))
@@ -980,7 +1167,7 @@ export function collectAllBuffEffects(ctx: PanelCalcContext): CollectedEffect[] 
     if (!agent) return
 
     const isMain = index === mainIndex
-    const roleLabel = isMain ? '主C' : '辅助'
+    const roleLabel = isMain ? '自身' : '队友'
     const matchesTarget = (e: BuffEffect) =>
       isMain ? e.applyTarget === 'self' || e.applyTarget === 'team' : e.applyTarget === 'team'
     const clampedRank = Math.min(6, Math.max(0, Math.round(slot.rank)))
@@ -1176,34 +1363,24 @@ export function collectAllBuffEffects(ctx: PanelCalcContext): CollectedEffect[] 
     )
   }
 
-  const beneficiaryAgent = ctx.agents.find(
-    (item) => item.id === ctx.teamSlots[mainIndex]?.agentId,
-  )
-  const beneficiaryProfession = beneficiaryAgent?.profession
-
   for (const env of ctx.environmentBuffs ?? []) {
     if (!env.effectBlocks?.length) continue
     const pack = {
       effectBlocks: env.effectBlocks,
       effects: [] as BuffEffect[],
     }
-    const kindLabel =
-      env.kind === 'crisis'
-        ? '危局 Buff'
-        : env.kind === 'boss-field'
-          ? 'Boss 场地 Buff'
-          : '防线 Buff'
+    const kindLabel = environmentBuffKindLabel(env.kind)
     // Boss 场地：卡片写 Boss 名，效果块名固定「场地 Buff」
     // 防卫战：卡片写「buff名 | 第x间」
-    const providerName =
-      env.kind === 'boss-field' ? env.bossName || env.name || 'Boss 场地 Buff' : env.name
-    const defenseRoomTitle =
-      env.kind === 'defense-room' && env.roomIndex != null ? `第${env.roomIndex}间` : ''
+    const providerName = isBossFieldEnvironmentKind(env.kind)
+      ? env.bossName || env.name || 'Boss 场地 Buff'
+      : env.name
     const sourceLabel = [
       kindLabel,
       env.version && env.phase ? `${env.version}第${env.phase}期` : '',
-      env.kind === 'boss-field' ? '' : env.roomLabel || '',
-      env.kind === 'boss-field' ? providerName : '',
+      env.kind === 'deduction-node' && env.nodeLabel ? env.nodeLabel : '',
+      isBossFieldEnvironmentKind(env.kind) ? '' : env.roomLabel || '',
+      isBossFieldEnvironmentKind(env.kind) ? providerName : '',
     ]
       .filter(Boolean)
       .join(' · ')
@@ -1215,25 +1392,17 @@ export function collectAllBuffEffects(ctx: PanelCalcContext): CollectedEffect[] 
     pushPack(
       {
         ...pack,
-        effectBlocks:
-          env.kind === 'boss-field'
-            ? pack.effectBlocks.map((block) => ({
-                ...block,
-                name: '场地 Buff',
-              }))
-            : env.kind === 'defense-room' && defenseRoomTitle
-              ? pack.effectBlocks.map((block) => ({
-                  ...block,
-                  name: defenseRoomTitle,
-                }))
-              : pack.effectBlocks,
+        effectBlocks: pack.effectBlocks.map((block) => ({
+          ...block,
+          name: mapEnvBuffBlockDisplayName(env, block),
+        })),
       },
       env.sourceKey,
       sourceLabel,
       providerName,
-      env.imageUrl,
+      env.imageUrl ? (resolveAssetUrl(env.imageUrl) ?? env.imageUrl) : null,
       () => kindLabel,
-      (effect) => extraGainMatchesProfession(effect, beneficiaryProfession),
+      () => true,
       noteParts.filter(Boolean).join('\n'),
     )
     // 保留数据里的 enabledDefault，供首次勾选效果块时只开「默认启用」项；
@@ -1243,7 +1412,161 @@ export function collectAllBuffEffects(ctx: PanelCalcContext): CollectedEffect[] 
   return collected
 }
 
+function mergeModsFromSources(sources: BuffModSource[]): BuffStatModifiers {
+  let total = createEmptyBuffStatModifiers()
+  for (const source of sources) {
+    total = mergeBuffStatModifiers(total, source.mods)
+  }
+  return total
+}
+
+type BuffCatalogPackKind = 'slot' | 'bangboo' | 'env' | 'extra'
+
+type BuffCatalogPack = {
+  kind: BuffCatalogPackKind
+  key: string
+  label: string
+  note?: string
+  blockName?: string
+  effects: BuffEffect[]
+  slotIndex?: number
+}
+
+const buffCatalogCache = new Map<string, BuffCatalogPack[]>()
+const BUFF_CATALOG_CACHE_LIMIT = 32
+
+function buildBuffCatalogKey(ctx: PanelCalcContext): string {
+  return JSON.stringify({
+    slots: ctx.teamSlots.map((slot) => [
+      slot.agentId,
+      slot.rank,
+      slot.wengineId,
+      slot.wengineRefine,
+      slot.twoPieceDriveDiscId,
+      slot.fourPieceDriveDiscId,
+    ]),
+    bangboo: [ctx.bangboo?.id ?? '', ctx.bangbooRefine, Boolean(ctx.excludeBangboo)],
+    main: ctx.mainSlotIndex,
+    restrict: ctx.restrictToSlotIndex ?? null,
+    extra: ctx.extraGains ?? ctx.extraMods ?? null,
+    sel: ctx.buffSelection ?? null,
+    skill: ctx.skillContext ?? null,
+    env: (ctx.environmentBuffs ?? []).map((item) => item.sourceKey),
+  })
+}
+
+function packsFromSources(sources: BuffModSource[]): BuffCatalogPack[] {
+  return sources.map((source) => {
+    if (source.key === 'extra') {
+      return { kind: 'extra', key: source.key, label: source.label, effects: [] }
+    }
+    if (source.key === 'bangboo') {
+      return {
+        kind: 'bangboo',
+        key: source.key,
+        label: source.label,
+        blockName: source.blockName,
+        effects: source.effects ?? [],
+      }
+    }
+    const slotIndex = parseSourceKeySlotIndex(source.key)
+    if (slotIndex != null) {
+      return {
+        kind: 'slot',
+        key: source.key,
+        label: source.label,
+        note: source.note,
+        blockName: source.blockName,
+        effects: source.effects ?? [],
+        slotIndex,
+      }
+    }
+    return {
+      kind: 'env',
+      key: source.key,
+      label: source.label,
+      note: source.note,
+      blockName: source.blockName,
+      effects: source.effects ?? [],
+    }
+  })
+}
+
+function materializeBuffCatalogPacks(
+  packs: BuffCatalogPack[],
+  ctx: PanelCalcContext,
+): BuffModSource[] {
+  const skillCtx = ctx.skillContext ?? defaultSkillContext('direct')
+  const mainIndex = ctx.mainSlotIndex
+  return packs.map((pack) => {
+    if (pack.kind === 'extra') {
+      return {
+        key: pack.key,
+        label: pack.label,
+        mods: resolveContextExtraMods(ctx),
+        effects: [],
+      }
+    }
+    if (pack.kind === 'bangboo') {
+      return {
+        key: pack.key,
+        label: pack.label,
+        blockName: pack.blockName,
+        effects: pack.effects,
+        mods: resolveEffectsToMods(pack.effects, {
+          ctx: skillCtx,
+          stacksByEffectId: ctx.buffSelection?.stacksByEffectId,
+          convertInputs: ctx.buffSelection?.convertInputs,
+          attrValues: ctx.attrValues,
+          panelSourceValues:
+            ctx.panelSourceValuesBySlot?.get(mainIndex) ?? ctx.panelSourceValues,
+          skipConvert: ctx.skipConvert,
+          selection: ctx.buffSelection,
+          resolveTeamProfessionCount: resolveTeamProfessionCountOption(ctx),
+        }),
+      }
+    }
+    if (pack.kind === 'env') {
+      return {
+        key: pack.key,
+        label: pack.label,
+        note: pack.note,
+        blockName: pack.blockName,
+        effects: pack.effects,
+        mods: resolvePackMods(pack.effects, true, { ...ctx, skillContext: skillCtx }),
+      }
+    }
+    const isMain = pack.slotIndex === mainIndex
+    return {
+      key: pack.key,
+      label: pack.label,
+      note: pack.note,
+      blockName: pack.blockName,
+      effects: pack.effects,
+      mods: pack.effects.length
+        ? resolvePackMods(pack.effects, isMain, { ...ctx, skillContext: skillCtx }, pack.slotIndex)
+        : createEmptyBuffStatModifiers(),
+    }
+  })
+}
+
+function rememberBuffCatalog(key: string, sources: BuffModSource[]) {
+  buffCatalogCache.set(key, packsFromSources(sources))
+  if (buffCatalogCache.size <= BUFF_CATALOG_CACHE_LIMIT) return
+  const oldest = buffCatalogCache.keys().next().value
+  if (oldest != null) buffCatalogCache.delete(oldest)
+}
+
 export function collectPanelBuffModSources(ctx: PanelCalcContext): BuffModSource[] {
+  const key = buildBuffCatalogKey(ctx)
+  const cached = buffCatalogCache.get(key)
+  if (cached) return materializeBuffCatalogPacks(cached, ctx)
+  const sources = collectPanelBuffModSourcesUncached(ctx)
+  rememberBuffCatalog(key, sources)
+  return sources
+}
+
+function collectPanelBuffModSourcesUncached(ctx: PanelCalcContext): BuffModSource[] {
   const sources: BuffModSource[] = []
   const mainIndex = ctx.mainSlotIndex
   const skillCtx = ctx.skillContext ?? defaultSkillContext('direct')
@@ -1256,7 +1579,7 @@ export function collectPanelBuffModSources(ctx: PanelCalcContext): BuffModSource
     if (!agent) return
 
     const isMain = index === mainIndex
-    const roleLabel = isMain ? '主C' : '辅助'
+    const roleLabel = isMain ? '自身' : '队友'
     const matchesTarget = (e: BuffEffect) =>
       isMain ? e.applyTarget === 'self' || e.applyTarget === 'team' : e.applyTarget === 'team'
     const clampedRank = Math.min(6, Math.max(0, Math.round(slot.rank)))
@@ -1463,10 +1786,6 @@ export function collectPanelBuffModSources(ctx: PanelCalcContext): BuffModSource
     })
   }
 
-  const beneficiaryProfession = ctx.agents.find(
-    (item) => item.id === ctx.teamSlots[mainIndex]?.agentId,
-  )?.profession
-
   for (const env of ctx.environmentBuffs ?? []) {
     if (!env.effectBlocks?.length) continue
     const defenseRoomTitle =
@@ -1474,37 +1793,27 @@ export function collectPanelBuffModSources(ctx: PanelCalcContext): BuffModSource
     for (const entry of collectBlockEntriesFromPack({
       effectBlocks: env.effectBlocks.map((block) => ({
         ...block,
-        name:
-          env.kind === 'boss-field'
-            ? '场地 Buff'
-            : defenseRoomTitle || block.name,
+        name: mapEnvBuffBlockDisplayName(env, block),
       })),
       effects: [],
     })) {
-      const effects = entry.effects
-        .filter((effect) => extraGainMatchesProfession(effect, beneficiaryProfession))
-        .map((effect) => ({
-          ...cloneEffectInstance(effect, env.sourceKey, entry.blockId),
-        }))
+      const effects = entry.effects.map((effect) => ({
+        ...cloneEffectInstance(effect, env.sourceKey, entry.blockId),
+      }))
       if (!effects.length) continue
       const mods = resolvePackMods(effects, true, { ...ctx, skillContext: skillCtx })
-      const kindLabel =
-        env.kind === 'crisis'
-          ? '危局 Buff'
-          : env.kind === 'boss-field'
-            ? 'Boss 场地 Buff'
-            : '防线 Buff'
-      const bossLabel =
-        env.kind === 'boss-field' ? env.bossName || env.name : env.name
+      const kindLabel = environmentBuffKindLabel(env.kind)
+      const bossLabel = isBossFieldEnvironmentKind(env.kind)
+        ? env.bossName || env.name
+        : env.name
       sources.push({
         key: `${env.sourceKey}-${entry.blockId}`,
         label: [kindLabel, bossLabel, defenseRoomTitle].filter(Boolean).join(' · '),
         mods,
         effects,
-        blockName:
-          env.kind === 'boss-field'
-            ? '场地 Buff'
-            : defenseRoomTitle || entry.blockName || env.name,
+        blockName: mapEnvBuffBlockDisplayName(env, {
+          name: entry.blockName || env.name,
+        }),
         note: mergeBuffDisplayNotes(
           env.text,
           env.kind === 'defense-room' && env.roomBosses?.length
@@ -1516,11 +1825,12 @@ export function collectPanelBuffModSources(ctx: PanelCalcContext): BuffModSource
     }
   }
 
-  if (ctx.extraMods) {
+  if (ctx.extraGains?.length || ctx.extraMods) {
     sources.push({
       key: 'extra',
       label: '额外 Buff',
-      mods: ctx.extraMods,
+      mods: resolveContextExtraMods(ctx),
+      effects: [],
     })
   }
 
@@ -1528,12 +1838,7 @@ export function collectPanelBuffModSources(ctx: PanelCalcContext): BuffModSource
 }
 
 export function collectPanelBuffMods(ctx: PanelCalcContext): BuffStatModifiers {
-  let total = createEmptyBuffStatModifiers()
-  const sources = collectPanelBuffModSources(ctx)
-  for (const source of sources) {
-    total = mergeBuffStatModifiers(total, source.mods)
-  }
-  return total
+  return mergeModsFromSources(collectPanelBuffModSources(ctx))
 }
 
 export function applyBuffModsToPanel(
@@ -1589,7 +1894,7 @@ export function applyBuffModsToPanel(
     radianceDmgBonus: externalPanel.radianceDmgBonus + mods.radianceDmgBonus,
     radianceResPen: externalPanel.radianceResPen + mods.radianceResPen,
     specialMult: (externalPanel.specialMult ?? 100) + mods.specialMult,
-    mutationCoeff: externalPanel.mutationCoeff + mods.mutationCoeff,
+    mutationCoeff: (Number(externalPanel.mutationCoeff) || 0) + (mods.mutationCoeff || 0),
     directDmgMultFactor: combineMultFactorPercent(
       externalPanel.directDmgMultFactor,
       mods.directDmgMultFactor,
@@ -1655,11 +1960,18 @@ export function panelToConvertAttrValues(
 export function extractCombatMods(mods: BuffStatModifiers): CombatBuffMods {
   return {
     vulnerable: mods.vulnerable,
+    directVulnerable: mods.directVulnerable,
+    anomalyVulnerable: mods.anomalyVulnerable,
+    dmgReduction: mods.dmgReduction,
+    directDmgReduction: mods.directDmgReduction,
+    anomalyDmgReduction: mods.anomalyDmgReduction,
     globalStaggerVulnerable: mods.globalStaggerVulnerable,
     staggerVulnerable: mods.staggerVulnerable,
     staggerVulnerableOnly: mods.staggerVulnerableOnly,
     special: mods.special,
     pierceDmgBonus: mods.pierceDmgBonus,
+    sharpenCritDmgBonus: mods.sharpenCritDmgBonus,
+    dmgPenalty: mods.dmgPenalty,
   }
 }
 
@@ -1678,7 +1990,11 @@ function effectMatchesReleaseMultElement(effect: BuffEffect, triggerElement?: st
   return filter.includes(triggerElement)
 }
 
-export function resolveMainCAnomalyReleaseMultFields(
+/**
+ * 按异放结算上下文汇总异放倍率 / 倍率乘算修正，写到给定局外面板上。
+ * 调用方应传入触发者面板（非主 C、非强度提供者）。
+ */
+export function resolveAnomalyReleaseMultFields(
   externalPanel: PanelStats,
   ctx: PanelCalcContext,
   triggerElement?: string,
@@ -1727,15 +2043,18 @@ export function resolveMainCAnomalyReleaseMultFields(
 }
 
 export function computeFinalPanel(
-  externalPanel: PanelStats,
+  rawExternalPanel: PanelStats,
   ctx: PanelCalcContext,
+  options?: ComputeFinalPanelOptions,
 ): PanelBuffBreakdown {
-  const teamMainIndex = resolveTeamMainSlotIndex(ctx)
+  const externalPanel = fillPanelStatsDefaults(rawExternalPanel)
+  const includeDetails = options?.includeDetails !== false
+  const liveIndex = resolveLiveExternalSlotIndex(ctx)
   const ctxForSources: PanelCalcContext = {
     ...ctx,
     mainExternalPanel:
       ctx.mainExternalPanel ??
-      (ctx.mainSlotIndex === teamMainIndex ? externalPanel : undefined),
+      (ctx.mainSlotIndex === liveIndex ? externalPanel : undefined),
   }
   const panelSourceValuesBySlot = buildAllPanelSourceValuesBySlot(ctxForSources, externalPanel)
   const mainPanelSources = panelSourceValuesBySlot.get(ctx.mainSlotIndex)
@@ -1777,7 +2096,8 @@ export function computeFinalPanel(
       final: finalAttrs,
     },
   }
-  const totalMods = collectPanelBuffMods(fullCtx)
+  const totalSources = collectPanelBuffModSources(fullCtx)
+  const totalMods = mergeModsFromSources(totalSources)
   return {
     totalMods,
     combatMods: extractCombatMods(totalMods),
@@ -1785,8 +2105,8 @@ export function computeFinalPanel(
       baseAnomalyControl,
       baseEnergyRegen,
     }),
-    sources: collectPanelBuffModSources(fullCtx),
-    collectedEffects: collectAllBuffEffects(fullCtx),
+    sources: includeDetails ? totalSources : [],
+    collectedEffects: [],
   }
 }
 

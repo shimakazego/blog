@@ -48,6 +48,6 @@ h1 {
 
 h5 {
     font-family: $font-family-base;
-    color: $text-muted;
+    color: var(--blog-muted);
 }
 </style>

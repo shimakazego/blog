@@ -28,6 +28,7 @@ import {
 
 export const DAMAGE_EVENT_KIND_OPTIONS: { id: DamageEventKind; label: string }[] = [
   { id: 'direct', label: '直伤' },
+  { id: 'sharpen', label: '锐化' },
   { id: 'anomaly', label: '异常' },
   { id: 'disorder', label: '紊乱' },
   { id: 'anomalyRelease', label: '异放' },
@@ -45,7 +46,7 @@ export function createEmptyDamageEvent(
   index = 0,
   kind: DamageEventKind = 'direct',
 ): DamageEvent {
-  const isAnomaly = kind !== 'direct'
+  const isAnomaly = kind !== 'direct' && kind !== 'sharpen'
   return {
     id: `evt-local-${Date.now().toString(36)}-${index}`,
     kind,
@@ -65,7 +66,7 @@ export function createEmptyDamageEvent(
 export function mapEventKindToCalc(
   kind: DamageEventKind,
 ): { damageKind: DamageCalcKind; anomalySubKind: AnomalyDamageSubKind } {
-  if (kind === 'direct') {
+  if (kind === 'direct' || kind === 'sharpen') {
     return { damageKind: 'direct', anomalySubKind: 'anomaly' }
   }
   if (kind === 'anomaly') {
@@ -88,18 +89,22 @@ export function pickEventDamage(
   kind: DamageEventKind,
   critMode: DamageEventCritMode,
 ): number {
-  if (kind === 'direct') {
-    const baseChain =
-      result.generalMultiplier *
-      result.specialMultiplier *
-      result.pierceDmgMultiplier
-    const multSum = result.directDmgMultZone + result.settlementDmgMultZone
-    if (critMode === 'noCrit') {
-      return baseChain * multSum
+  if (kind === 'direct' || kind === 'sharpen') {
+    if (result.useSharpenFormula) {
+      const perZone =
+        result.sharpenCritZone > 0
+          ? result.directDamageExpected / result.sharpenCritZone
+          : result.directDamageExpected
+      if (critMode === 'noCrit') return perZone * result.sharpenCritZoneNoCrit
+      if (critMode === 'fullCrit') return perZone * result.sharpenCritZoneFullCrit
+      return result.directDamageExpected
     }
-    if (critMode === 'fullCrit') {
-      return baseChain * multSum * (1 + result.critDmgRatio)
-    }
+    const perCrit =
+      result.critMultiplier > 0
+        ? result.directDamageExpected / result.critMultiplier
+        : result.directDamageExpected
+    if (critMode === 'noCrit') return perCrit
+    if (critMode === 'fullCrit') return perCrit * (1 + result.critDmgRatio)
     return result.directDamageExpected
   }
   if (kind === 'anomaly') {
@@ -121,6 +126,24 @@ export function pickEventDamage(
   if (critMode === 'noCrit') return result.turbulenceExpectedNoCrit
   if (critMode === 'fullCrit') return result.turbulenceExpectedFullCrit
   return result.turbulenceExpected
+}
+
+/**
+ * 流程卡外侧汇总用暴击模式：
+ * 异常 / 乱流 / 异放固定必暴击；直伤、紊乱、耀变仍跟随条目 critMode。
+ */
+export function resolveFlowHitCritMode(
+  damageType: DamageEventKind,
+  entryCritMode: DamageEventCritMode,
+): DamageEventCritMode {
+  if (
+    damageType === 'anomaly' ||
+    damageType === 'turbulence' ||
+    damageType === 'anomalyRelease'
+  ) {
+    return 'fullCrit'
+  }
+  return entryCritMode
 }
 
 export function disorderLabelFromResult(result: DamageCalcResult): string {
@@ -176,33 +199,36 @@ export interface DamageEventParticipationContext {
   mainAgentId?: string
 }
 
-/** 乱流：主 C、事件产生角色或异常产生角色之一须为风属性 */
+/** 乱流：异常类触发者须为风属性 */
+export function isTurbulenceWindTrigger(
+  agents: Array<{ id: string; element: string }>,
+  triggerAgentId: string | null | undefined,
+): boolean {
+  if (!triggerAgentId) return false
+  return agents.find((agent) => agent.id === triggerAgentId)?.element === '风'
+}
+
+/** @deprecated 旧规则：持有者/强度提供者/触发者之一为风；现以 isTurbulenceWindTrigger 为准 */
 export function hasTurbulenceWindRole(
   agents: Array<{ id: string; element: string }>,
-  mainAgentId: string,
-  ownerAgentId: string,
-  triggerAgentId: string | null,
+  ...agentIds: Array<string | null | undefined>
 ): boolean {
   const elementOf = (id: string | null | undefined) =>
     id ? agents.find((agent) => agent.id === id)?.element : undefined
-  return (
-    elementOf(mainAgentId) === '风' ||
-    elementOf(ownerAgentId) === '风' ||
-    (triggerAgentId != null && elementOf(triggerAgentId) === '风')
-  )
+  return agentIds.some((id) => elementOf(id) === '风')
 }
 
 export function getTurbulenceParticipationFailureReason(
   ctx: Pick<DamageEventParticipationContext, 'teamSlots' | 'agents'>,
-  mainAgentId: string,
-  ownerAgentId: string,
+  _ownerAgentId: string,
+  _powerAgentId: string | null,
   triggerAgentId: string | null,
 ): string | null {
   if (!isTurbulenceTeamCompositionOk(ctx.teamSlots, ctx.agents)) {
     return '乱流需队伍同时包含风属性与至少一个非风属性代理人'
   }
-  if (!hasTurbulenceWindRole(ctx.agents, mainAgentId, ownerAgentId, triggerAgentId)) {
-    return '乱流伤害需事件产生角色、异常产生角色或主 C 之一为风属性'
+  if (!isTurbulenceWindTrigger(ctx.agents, triggerAgentId)) {
+    return '乱流仅当异常类触发者为风属性角色时才能生效'
   }
   return null
 }
@@ -212,7 +238,7 @@ export function getDamageEventSkipReason(
   event: DamageEvent,
   ctx: DamageEventParticipationContext,
 ): string | null {
-  const mainSlot = ctx.teamSlots.find((slot) => slot.isMainC) ?? ctx.teamSlots[0]
+  const mainSlot = ctx.teamSlots[0]
   const mainAgentId = ctx.mainAgentId ?? mainSlot?.agentId ?? ''
   const ownerId = resolveEventOwnerAgentId(event, mainAgentId)
   const ownerAgent = ctx.agents.find((item) => item.id === ownerId)
@@ -233,6 +259,9 @@ export function getDamageEventSkipReason(
     const producer = ctx.agents.find((item) => item.id === triggerId)
     if (!canAgentBeAnomalyProducerForKind(producer, 'radiance')) {
       return '耀变异常产生角色须为队内代理人'
+    }
+    if (!isLuminousAgent(producer)) {
+      return '耀变仅当异常类触发者为蕾米埃尔时才能生效'
     }
     return null
   }
@@ -259,12 +288,7 @@ export function getDamageEventSkipReason(
   }
 
   if (event.kind === 'turbulence') {
-    const failure = getTurbulenceParticipationFailureReason(
-      ctx,
-      mainAgentId,
-      ownerId,
-      triggerId,
-    )
+    const failure = getTurbulenceParticipationFailureReason(ctx, ownerId, triggerId, triggerId)
     if (failure) return failure
   }
 
@@ -273,19 +297,15 @@ export function getDamageEventSkipReason(
 
 export function getRadianceEventHint(event: DamageEvent, ctx: DamageEventParticipationContext): string | null {
   if (event.kind !== 'radiance') return null
-  const mainSlot = ctx.teamSlots.find((slot) => slot.isMainC) ?? ctx.teamSlots[0]
-  const mainAgentId = ctx.mainAgentId ?? mainSlot?.agentId ?? ''
   const remielId = resolveRadianceOwnerAgentId(ctx.teamSlots, ctx.agents)
-  const triggerId =
+  // 旧 DamageEvent 仅有 triggerAgentId（产生角色）；本人耀变特殊公式现以强度提供者为准。
+  // 无独立 anomalyPowerAgentId 时，用产生角色作近似提示。
+  const powerOrProducerId =
     event.triggerAgentId && event.triggerAgentId !== TRIGGER_AGENT_AT_CALC
       ? event.triggerAgentId
       : null
-  if (remielId && triggerId === remielId) {
+  if (remielId && powerOrProducerId === remielId) {
     return RADIANCE_SELF_TRIGGER_HINT
-  }
-  const ownerId = resolveEventOwnerAgentId(event, mainAgentId)
-  if (remielId && ownerId === remielId && triggerId && triggerId !== remielId) {
-    return null
   }
   return null
 }
@@ -337,7 +357,7 @@ export function isTriggerAgentAtCalc(id: string | null | undefined): boolean {
   return id === TRIGGER_AGENT_AT_CALC || id == null || id === ''
 }
 
-/** 耀变综合增伤/倍率/特殊倍率乘区取主 C 面板；覆写也应写入主 C 侧 */
+/** 耀变综合增伤/倍率/特殊倍率乘区取异常类触发者面板；覆写也应写入触发者侧 */
 export function applyRadianceBonusMultOverrides(
   panel: PanelStats,
   overrides: DamageEventMultOverrides | null | undefined,
@@ -359,6 +379,61 @@ export function applyRadianceBonusMultOverrides(
     next.specialMultFactor = overrides.specialMultFactor
   }
   return next
+}
+
+export interface SkillZoneMultResolved {
+  panelOverrides: DamageEventMultOverrides | null | undefined
+  disorderZoneMult?: number | null
+  disorderZoneMultFactor?: number | null
+  turbulenceZoneMult?: number | null
+  turbulenceZoneMultFactor?: number | null
+}
+
+/**
+ * 招式倍率填写（紊乱/乱流）语义为最终倍率区%，不是面板基础倍率。
+ * 拆出 zone 覆写，并剥离会误入面板的 base 字段（含旧存档 disorderBaseMult）。
+ */
+export function splitSkillZoneMultOverrides(
+  damageType: DamageEventKind,
+  overrides: DamageEventMultOverrides | null | undefined,
+): SkillZoneMultResolved {
+  if (!overrides) return { panelOverrides: overrides }
+
+  if (damageType === 'disorder') {
+    const zone = overrides.disorderZoneMult ?? overrides.disorderBaseMult
+    if (zone != null) {
+      const {
+        disorderZoneMult: _zone,
+        disorderBaseMult: _base,
+        disorderBaseMultFactor: _factor,
+        ...rest
+      } = overrides
+      return {
+        panelOverrides: Object.keys(rest).length ? rest : null,
+        disorderZoneMult: zone,
+        disorderZoneMultFactor: overrides.disorderBaseMultFactor ?? 100,
+      }
+    }
+  }
+
+  if (damageType === 'turbulence') {
+    const zone = overrides.turbulenceZoneMult ?? overrides.turbulenceBaseMult
+    if (zone != null) {
+      const {
+        turbulenceZoneMult: _zone,
+        turbulenceBaseMult: _base,
+        turbulenceBaseMultFactor: _factor,
+        ...rest
+      } = overrides
+      return {
+        panelOverrides: Object.keys(rest).length ? rest : null,
+        turbulenceZoneMult: zone,
+        turbulenceZoneMultFactor: overrides.turbulenceBaseMultFactor ?? 100,
+      }
+    }
+  }
+
+  return { panelOverrides: overrides }
 }
 
 /** 事件倍率覆写（不含耀变主 C _bonus 字段） */

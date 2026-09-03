@@ -1,7 +1,7 @@
 export type EnemyResistanceType = 'weak' | 'normal' | 'res20' | 'res40'
 
 /** 可单独配置抗性的属性（不含流明） */
-export const ENEMY_RESISTANCE_ELEMENTS = ['风', '火', '电', '物理', '以太', '冰'] as const
+export const ENEMY_RESISTANCE_ELEMENTS = ['风', '火', '电', '物理', '以太', '冰', '霜'] as const
 
 export type EnemyResistanceElement = (typeof ENEMY_RESISTANCE_ELEMENTS)[number]
 
@@ -55,6 +55,7 @@ export function createDefaultElementResistance(): Record<
     物理: 'normal',
     以太: 'normal',
     冰: 'normal',
+    霜: 'normal',
   }
 }
 

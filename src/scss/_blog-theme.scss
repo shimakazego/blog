@@ -1,0 +1,33 @@
+/**
+ * 博客自身页面（hero / game-guides / yuri / fun / about）的亮暗主题变量。
+ * 由全局 ThemeToggle 切换 <html data-theme> 驱动，与 ZZZ-HP 主题联动。
+ * 只定义变量与针对性的覆盖，不改动既有选择器。
+ */
+
+:root,
+html[data-theme='light'] {
+    --blog-body-bg: #f8f9fa;          /* body 背景 */
+    --blog-section-bg: #fefefe;      /* PageSection 默认区块背景 */
+    --blog-section-text: #212529;    /* 区块正文文字 */
+    --blog-muted: #757575;           /* 次要文字 */
+
+    /* hero 遮罩：亮色下适当减淡，保留标题可读性 */
+    --hero-overlay-opacity: 0.78;
+}
+
+html[data-theme='dark'] {
+    --blog-body-bg: #101114;
+    --blog-section-bg: #16181d;
+    --blog-section-text: #e8e6df;
+    --blog-muted: #9aa0a6;
+    --hero-overlay-opacity: 1;
+}
+
+/* hero 背景遮罩随主题微调 */
+html[data-theme='light'] div.foxy-promo-background-overlay-default {
+    opacity: var(--hero-overlay-opacity);
+}
+
+html[data-theme='light'] body {
+    color: var(--blog-section-text);
+}

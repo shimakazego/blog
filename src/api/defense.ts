@@ -21,8 +21,6 @@ import { getAdminToken, isAdminAuthenticated } from '@/utils/adminAuth'
 
 export { filterChartPointsByLabels }
 
-const ZZZ_API_PREFIX = '/api/zzz'
-
 interface ApiDefenseSeason extends DefenseSeason {}
 
 interface ApiResponse {
@@ -71,7 +69,7 @@ function normalizeSeason(season: DefenseSeason): DefenseSeason {
 }
 
 export async function fetchDefenseSeasons(variant: DefenseVariant): Promise<DefenseSeason[]> {
-  const response = await fetch(`${ZZZ_API_PREFIX}/defense/seasons?variant=${variant}`, {
+  const response = await fetch(`/api/zzz/zzz/defense/seasons?variant=${variant}`, {
     headers: adminAuthHeaders(),
   })
   if (!response.ok) {
@@ -168,7 +166,7 @@ export async function fetchDefenseBossChart(
 }
 
 export async function fetchDefenseSeasonIdMap(): Promise<DefenseSeasonIdRow[]> {
-  const response = await fetch(`${ZZZ_API_PREFIX}/defense/season-id-map`)
+  const response = await fetch('/api/zzz/defense/season-id-map')
   if (!response.ok) {
     throw new Error(`请求失败: ${response.status}`)
   }

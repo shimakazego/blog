@@ -2,9 +2,11 @@ import type {
   AgentBuffDoc,
   BangbooBuffDoc,
   CalculatorBuffData,
+  CalculatorBuffImportSummary,
   DamageEventMode,
   DriveDiscBuffDoc,
   FollowUpSkillRule,
+  Skill,
   SkillSubcategory,
   WengineBuffDoc,
 } from '@/types/calculator'
@@ -16,26 +18,56 @@ interface ApiResponse<T> {
   data: T
 }
 
-const ZZZ_API_PREFIX = '/api/zzz'
+export class CalculatorBuffApiError extends Error {
+  status: number
+  apiCode: string
+
+  constructor(message: string, status: number, apiCode = '') {
+    super(message)
+    this.name = 'CalculatorBuffApiError'
+    this.status = status
+    this.apiCode = apiCode
+  }
+}
+
+function readApiCode(data: unknown): string {
+  if (!data || typeof data !== 'object' || !('code' in data)) return ''
+  const code = (data as { code?: unknown }).code
+  return typeof code === 'string' ? code : ''
+}
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
-  const method = (init?.method || 'GET').toUpperCase()
-  const needsAdmin = method !== 'GET' && method !== 'HEAD'
-  const headers = needsAdmin ? withAdminAuthHeaders(init?.headers) : init?.headers
+  const headers = withAdminAuthHeaders(init?.headers)
   const response = await fetch(input, { ...init, headers })
-  const json = (await response.json()) as ApiResponse<T>
+  let json: ApiResponse<T>
+  try {
+    json = (await response.json()) as ApiResponse<T>
+  } catch {
+    throw new CalculatorBuffApiError(`请求失败: ${response.status}`, response.status)
+  }
   if (!response.ok || json.code !== 200) {
-    throw new Error(json.message || `请求失败: ${response.status}`)
+    throw new CalculatorBuffApiError(
+      json.message || `请求失败: ${response.status}`,
+      response.status,
+      readApiCode(json.data),
+    )
   }
   return json.data
 }
 
+export function isAdminAuthError(err: unknown): boolean {
+  return (
+    err instanceof CalculatorBuffApiError &&
+    (err.status === 401 || err.apiCode === 'ADMIN_AUTH_REQUIRED')
+  )
+}
+
 export async function fetchCalculatorBuffs(): Promise<CalculatorBuffData> {
-  return requestJson<CalculatorBuffData>(`${ZZZ_API_PREFIX}/calculator-buffs`)
+  return requestJson<CalculatorBuffData>('/api/zzz/calculator-buffs')
 }
 
 export async function saveAgentBuff(doc: AgentBuffDoc): Promise<AgentBuffDoc> {
-  return requestJson<AgentBuffDoc>(`${ZZZ_API_PREFIX}/calculator-buffs/agents`, {
+  return requestJson<AgentBuffDoc>('/api/zzz/calculator-buffs/agents', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(doc),
@@ -43,13 +75,13 @@ export async function saveAgentBuff(doc: AgentBuffDoc): Promise<AgentBuffDoc> {
 }
 
 export async function fetchSkillSubcategories(): Promise<SkillSubcategory[]> {
-  return requestJson<SkillSubcategory[]>(`${ZZZ_API_PREFIX}/calculator-buffs/skill-subcategories`)
+  return requestJson<SkillSubcategory[]>('/api/zzz/calculator-buffs/skill-subcategories')
 }
 
 export async function saveSkillSubcategory(
   doc: SkillSubcategory,
 ): Promise<SkillSubcategory> {
-  return requestJson<SkillSubcategory>(`${ZZZ_API_PREFIX}/calculator-buffs/skill-subcategories`, {
+  return requestJson<SkillSubcategory>('/api/zzz/calculator-buffs/skill-subcategories', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(doc),
@@ -58,15 +90,33 @@ export async function saveSkillSubcategory(
 
 export async function deleteSkillSubcategory(id: string): Promise<void> {
   await requestJson<{ id: string }>(
-    `${ZZZ_API_PREFIX}/calculator-buffs/skill-subcategories/${encodeURIComponent(id)}`,
+    `/api/zzz/calculator-buffs/skill-subcategories/${encodeURIComponent(id)}`,
     { method: 'DELETE' },
   )
+}
+
+export async function fetchPresetSkills(): Promise<Skill[]> {
+  return requestJson<Skill[]>('/api/zzz/calculator-buffs/skills')
+}
+
+export async function savePresetSkill(doc: Skill): Promise<Skill> {
+  return requestJson<Skill>('/api/zzz/calculator-buffs/skills', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(doc),
+  })
+}
+
+export async function deletePresetSkill(id: string): Promise<void> {
+  await requestJson<{ id: string }>(`/api/zzz/calculator-buffs/skills/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
 }
 
 export async function saveFollowUpSkillRule(
   doc: FollowUpSkillRule,
 ): Promise<FollowUpSkillRule> {
-  return requestJson<FollowUpSkillRule>(`${ZZZ_API_PREFIX}/calculator-buffs/follow-up-rules`, {
+  return requestJson<FollowUpSkillRule>('/api/zzz/calculator-buffs/follow-up-rules', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(doc),
@@ -75,17 +125,17 @@ export async function saveFollowUpSkillRule(
 
 export async function deleteFollowUpSkillRule(id: string): Promise<void> {
   await requestJson<{ id: string }>(
-    `${ZZZ_API_PREFIX}/calculator-buffs/follow-up-rules/${encodeURIComponent(id)}`,
+    `/api/zzz/calculator-buffs/follow-up-rules/${encodeURIComponent(id)}`,
     { method: 'DELETE' },
   )
 }
 
 export async function fetchDamageEventModes(): Promise<DamageEventMode[]> {
-  return requestJson<DamageEventMode[]>(`${ZZZ_API_PREFIX}/calculator-buffs/damage-event-modes`)
+  return requestJson<DamageEventMode[]>('/api/zzz/calculator-buffs/damage-event-modes')
 }
 
 export async function saveDamageEventMode(doc: DamageEventMode): Promise<DamageEventMode> {
-  return requestJson<DamageEventMode>(`${ZZZ_API_PREFIX}/calculator-buffs/damage-event-modes`, {
+  return requestJson<DamageEventMode>('/api/zzz/calculator-buffs/damage-event-modes', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(doc),
@@ -94,19 +144,19 @@ export async function saveDamageEventMode(doc: DamageEventMode): Promise<DamageE
 
 export async function deleteDamageEventMode(id: string): Promise<void> {
   await requestJson<{ id: string }>(
-    `${ZZZ_API_PREFIX}/calculator-buffs/damage-event-modes/${encodeURIComponent(id)}`,
+    `/api/zzz/calculator-buffs/damage-event-modes/${encodeURIComponent(id)}`,
     { method: 'DELETE' },
   )
 }
 
 export async function deleteAgentBuff(id: string): Promise<void> {
-  await requestJson<{ id: string }>(`${ZZZ_API_PREFIX}/calculator-buffs/agents/${encodeURIComponent(id)}`, {
+  await requestJson<{ id: string }>(`/api/zzz/calculator-buffs/agents/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   })
 }
 
 export async function saveWengineBuff(doc: WengineBuffDoc): Promise<WengineBuffDoc> {
-  return requestJson<WengineBuffDoc>(`${ZZZ_API_PREFIX}/calculator-buffs/wengines`, {
+  return requestJson<WengineBuffDoc>('/api/zzz/calculator-buffs/wengines', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(doc),
@@ -114,13 +164,13 @@ export async function saveWengineBuff(doc: WengineBuffDoc): Promise<WengineBuffD
 }
 
 export async function deleteWengineBuff(id: string): Promise<void> {
-  await requestJson<{ id: string }>(`${ZZZ_API_PREFIX}/calculator-buffs/wengines/${encodeURIComponent(id)}`, {
+  await requestJson<{ id: string }>(`/api/zzz/calculator-buffs/wengines/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   })
 }
 
 export async function saveBangbooBuff(doc: BangbooBuffDoc): Promise<BangbooBuffDoc> {
-  return requestJson<BangbooBuffDoc>(`${ZZZ_API_PREFIX}/calculator-buffs/bangboos`, {
+  return requestJson<BangbooBuffDoc>('/api/zzz/calculator-buffs/bangboos', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(doc),
@@ -128,13 +178,13 @@ export async function saveBangbooBuff(doc: BangbooBuffDoc): Promise<BangbooBuffD
 }
 
 export async function deleteBangbooBuff(id: string): Promise<void> {
-  await requestJson<{ id: string }>(`${ZZZ_API_PREFIX}/calculator-buffs/bangboos/${encodeURIComponent(id)}`, {
+  await requestJson<{ id: string }>(`/api/zzz/calculator-buffs/bangboos/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   })
 }
 
 export async function saveDriveDiscBuff(doc: DriveDiscBuffDoc): Promise<DriveDiscBuffDoc> {
-  return requestJson<DriveDiscBuffDoc>(`${ZZZ_API_PREFIX}/calculator-buffs/drive-discs`, {
+  return requestJson<DriveDiscBuffDoc>('/api/zzz/calculator-buffs/drive-discs', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(doc),
@@ -142,7 +192,22 @@ export async function saveDriveDiscBuff(doc: DriveDiscBuffDoc): Promise<DriveDis
 }
 
 export async function deleteDriveDiscBuff(id: string): Promise<void> {
-  await requestJson<{ id: string }>(`${ZZZ_API_PREFIX}/calculator-buffs/drive-discs/${encodeURIComponent(id)}`, {
+  await requestJson<{ id: string }>(`/api/zzz/calculator-buffs/drive-discs/${encodeURIComponent(id)}`, {
     method: 'DELETE',
+  })
+}
+
+export async function fetchCalculatorBuffSnapshot(): Promise<CalculatorBuffData> {
+  return requestJson<CalculatorBuffData>('/api/zzz/calculator-buffs/export')
+}
+
+export async function importCalculatorBuffSnapshotFile(
+  file: File,
+): Promise<CalculatorBuffImportSummary> {
+  const form = new FormData()
+  form.append('file', file)
+  return requestJson<CalculatorBuffImportSummary>('/api/zzz/calculator-buffs/import', {
+    method: 'POST',
+    body: form,
   })
 }

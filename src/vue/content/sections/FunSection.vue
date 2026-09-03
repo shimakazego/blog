@@ -115,6 +115,8 @@ const funProjects = [
     border: 1px solid rgba($dark, 0.08);
     background: linear-gradient(180deg, rgba($white, 0.98), rgba($light-1, 0.88));
     box-shadow: 0 18px 40px rgba($dark, 0.08);
+    /* 白卡自含：卡内文字固定深色，不随暗色主题变浅 */
+    color: #212529;
 }
 
 .fun-feature {
@@ -148,7 +150,7 @@ const funProjects = [
 
 .fun-feature-text {
     margin: 1rem 0 0;
-    color: $text-muted;
+    color: #6c757d;
     line-height: 1.85;
 }
 
@@ -163,7 +165,7 @@ const funProjects = [
     padding: 0.75rem 1rem;
     border-radius: 999px;
     border: 1px solid rgba($dark, 0.12);
-    color: $dark;
+    color: #212529;
     font-weight: 700;
 }
 
@@ -204,7 +206,7 @@ const funProjects = [
 }
 
 .fun-card-badge {
-    color: $text-muted;
+    color: #6c757d;
     font-size: 0.8rem;
 }
 
@@ -222,7 +224,7 @@ const funProjects = [
 
 .fun-card-text {
     margin: 0.8rem 0 0;
-    color: $text-muted;
+    color: #6c757d;
     line-height: 1.8;
 }
 
@@ -236,7 +238,7 @@ const funProjects = [
     padding: 0.6rem 0.85rem;
     border-radius: 999px;
     background: rgba($dark, 0.05);
-    color: $dark;
+    color: #212529;
     font-weight: 700;
 }
 
