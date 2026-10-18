@@ -46,6 +46,12 @@ function cleanSummary(text) {
         .trim()
 }
 
+// 解析条目的最终简介：翻译结果（summaryCn）优先，其次 BGM 原文清洗
+function resolveSummary(item) {
+    const source = item.summaryCn ? String(item.summaryCn) : cleanSummary(item.subject?.summary)
+    return cleanSummary(source) || null
+}
+
 function subjectRating(subject) {
     const score = Number(subject.rating?.score || 0)
     const total = Number(subject.rating?.total || 0)
@@ -153,7 +159,7 @@ for(const item of topics.items) {
     const subject = item.subject
     const existing = byBgmId.get(String(subject.id))
     if(existing) {
-        plan.refresh.push({entry: existing, subject})
+        plan.refresh.push({entry: existing, subject, summaryCn: item.summaryCn})
         continue
     }
     const duplicate = findDuplicateEntry(subject)
@@ -171,7 +177,7 @@ for(const item of topics.items) {
         slug = `${base}-bgm${subject.id}`
     }
     takenSlugs.add(slug)
-    plan.inserts.push({subject, cover: item.cover, slug})
+    plan.inserts.push({subject, cover: item.cover, slug, summaryCn: item.summaryCn})
 }
 
 console.log(`\n[sync] 计划：新增 ${plan.inserts.length} / 刷新 ${plan.refresh.length} / 跳过(疑似重复) ${plan.skipDuplicate.length}`)
@@ -204,11 +210,11 @@ try {
     let insertedSnapshots = 0
     let copiedCovers = 0
 
-    for(const {entry, subject} of plan.refresh) {
+    for(const {entry, subject, summaryCn} of plan.refresh) {
         const rating = subjectRating(subject)
         const scoreText = rating.score !== null ? formatOneDecimal(rating.score) : null
         const byline = rating.score !== null ? `Bangumi ${scoreText} / ${rating.total ?? 0} ratings` : "Bangumi entry"
-        const newSummary = cleanSummary(subject.summary) || null
+        const newSummary = resolveSummary({subject, summaryCn})
 
         const updates = []
         const params = []
@@ -242,7 +248,7 @@ try {
         refreshedSnapshots += snapResult.affectedRows
     }
 
-    for(const {subject, cover, slug} of plan.inserts) {
+    for(const {subject, cover, slug, summaryCn} of plan.inserts) {
         const year = Number(String(subject.date || "").slice(0, 4)) || null
         const rating = subjectRating(subject)
         const scoreText = rating.score !== null ? formatOneDecimal(rating.score) : null
@@ -274,7 +280,7 @@ try {
                 platformToEntryType(subject.platform),
                 year,
                 byline,
-                cleanSummary(subject.summary) || null,
+                resolveSummary({subject, summaryCn}),
                 bgmUrl,
                 externalCoverUrl,
                 scoreText,

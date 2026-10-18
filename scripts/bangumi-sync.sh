@@ -38,6 +38,21 @@ trap 'rm -f "$LOCK"' EXIT
     exit 1
   fi
 
+  # 可选：LLM 翻译纯日文简介（存在配置文件后生效；失败不阻塞导入）
+  ENV_FILE=/volume1/docker/blog/bangumi-translate.env
+  TRANSLATE_SCRIPT=/volume1/docker/blog/translate-bangumi-summaries.mjs
+  if [ -f "$ENV_FILE" ] && [ -f "$TRANSLATE_SCRIPT" ]; then
+    [ -f /volume1/docker/blog/bangumi-translate-cache.json ] || echo '{}' > /volume1/docker/blog/bangumi-translate-cache.json
+    echo "[translate] LLM 翻译日文简介..."
+    "$DOCKER" run --rm --network host --env-file "$ENV_FILE" \
+      -v "$TRANSLATE_SCRIPT":/translate.mjs \
+      -v /volume1/docker/blog/bangumi-translate-cache.json:/cache.json \
+      -v "$ROOT_DIR":/data \
+      server-app:latest node /translate.mjs --data-dir /data --cache /cache.json || echo "[translate] 失败，跳过（不影响导入）"
+  else
+    echo "[translate] 未配置 translate env/script，跳过"
+  fi
+
   "$DOCKER" exec blog-express rm -rf /tmp/bangumi-sync
   "$DOCKER" exec blog-express mkdir -p /tmp/bangumi-sync
   "$DOCKER" cp "$ROOT_DIR/." blog-express:/tmp/bangumi-sync/
