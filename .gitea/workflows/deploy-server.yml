@@ -23,7 +23,10 @@ jobs:
 
     steps:
       - name: 准备工具
-        run: apk add --no-cache git rsync docker-cli docker-cli-compose
+        run: |
+          # 换国内镜像源，避免 apk 从 dl-cdn.alpinelinux.org 慢速下载（大瓶颈）
+          sed -i 's#dl-cdn.alpinelinux.org#mirrors.aliyun.com#' /etc/apk/repositories
+          apk add --no-cache git rsync docker-cli docker-cli-compose
 
       - name: 拉取代码
         run: |
