@@ -121,6 +121,8 @@ CREATE TABLE IF NOT EXISTS yuri_entries (
   score VARCHAR(20) NULL,
   douban_subject_id VARCHAR(50) NULL,
   douban_url VARCHAR(500) NULL,
+  bangumi_subject_id VARCHAR(50) NULL,
+  bangumi_url VARCHAR(500) NULL,
   is_curated TINYINT(1) NOT NULL DEFAULT 0,
   cover_media_id BIGINT UNSIGNED NULL,
   category_id BIGINT UNSIGNED NULL,
@@ -131,6 +133,7 @@ CREATE TABLE IF NOT EXISTS yuri_entries (
   PRIMARY KEY (id),
   UNIQUE KEY uk_yuri_entries_slug (slug),
   UNIQUE KEY uk_yuri_entries_douban_subject_id (douban_subject_id),
+  UNIQUE KEY uk_yuri_entries_bangumi_subject_id (bangumi_subject_id),
   CONSTRAINT fk_yuri_entries_cover_media
     FOREIGN KEY (cover_media_id) REFERENCES media_files(id)
     ON DELETE SET NULL ON UPDATE CASCADE,
