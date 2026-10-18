@@ -116,7 +116,7 @@
 
                                 <div class="yuri-card-overlay">
                                     <span class="yuri-card-overlay-text">
-                                        <i class="pi pi-external-link me-1"/>查看豆瓣详情
+                                        <i class="pi pi-external-link me-1"/>{{ work.detailLabel || "查看详情" }}
                                     </span>
                                 </div>
                             </a>
@@ -513,6 +513,7 @@ function normalizeFallbackEntry(entry, index) {
         cover,
         score,
         scoreLabel: "站内推荐",
+        detailLabel: "查看详情",
         scoreCount,
         scoreCountText: formatScoreCount(scoreCount),
         starValue: getStarValue(score)
@@ -534,7 +535,7 @@ function normalizeEntry(entry, index) {
     const scoreCount = parseScoreCount(entry)
     const entryTypeLabel = entryTypeLabels[entry.entryType] || toDisplayText(entry.entryType) || "作品条目"
     const kind = entry.kind || entry.categoryName || entryTypeLabel
-    const primaryUrl = entry.doubanUrl || entry.resourceUrl || "#"
+    const primaryUrl = entry.bangumiUrl || entry.doubanUrl || entry.resourceUrl || "#"
     const normalized = {
         id: entry.id ?? `entry-${index}`,
         name: entry.titleZh || entry.name || entry.titleOriginal || "未命名条目",
@@ -553,7 +554,8 @@ function normalizeEntry(entry, index) {
         primaryUrl,
         cover: normalizeCoverSource(entry.coverUrl || entry.externalCoverUrl || fallbackCovers[index % fallbackCovers.length]),
         score,
-        scoreLabel: entry.doubanUrl ? "豆瓣评分" : "站内推荐",
+        scoreLabel: entry.bangumiUrl ? "Bangumi 评分" : (entry.doubanUrl ? "豆瓣评分" : "站内推荐"),
+        detailLabel: entry.bangumiUrl ? "查看 Bangumi 详情" : "查看豆瓣详情",
         scoreCount,
         scoreCountText: formatScoreCount(scoreCount),
         starValue: getStarValue(score)

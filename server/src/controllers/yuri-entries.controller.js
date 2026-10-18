@@ -133,6 +133,8 @@ export const listYuriEntries = async (req, res) => {
             y.score,
             y.douban_subject_id AS doubanSubjectId,
             y.douban_url AS doubanUrl,
+            y.bangumi_subject_id AS bangumiSubjectId,
+            y.bangumi_url AS bangumiUrl,
             y.is_curated AS isCurated,
             y.status,
             y.published_at AS publishedAt,
@@ -152,7 +154,6 @@ export const listYuriEntries = async (req, res) => {
             INNER JOIN (
                 SELECT yuri_entry_id, MAX(id) AS latest_id
                 FROM yuri_entry_source_snapshots
-                WHERE source_type = 'douban'
                 GROUP BY yuri_entry_id
             ) latest ON latest.latest_id = yes.id
         ) s ON s.yuri_entry_id = y.id
@@ -219,6 +220,8 @@ export const createYuriEntry = async (req, res) => {
         score = null,
         doubanSubjectId = null,
         doubanUrl = null,
+        bangumiSubjectId = null,
+        bangumiUrl = null,
         isCurated = false,
         status = "draft",
         categoryId = null,
@@ -251,13 +254,15 @@ export const createYuriEntry = async (req, res) => {
                 score,
                 douban_subject_id,
                 douban_url,
+                bangumi_subject_id,
+                bangumi_url,
                 is_curated,
                 status,
                 category_id,
                 cover_media_id,
                 published_at
             )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             name,
             finalSlug,
@@ -275,6 +280,8 @@ export const createYuriEntry = async (req, res) => {
             score,
             doubanSubjectId,
             doubanUrl,
+            bangumiSubjectId,
+            bangumiUrl,
             Number(Boolean(isCurated)),
             status,
             categoryId,

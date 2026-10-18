@@ -1,0 +1,47 @@
+# Bangumi 百合数据同步（抓取端）
+# 运行在 GitHub Actions（可直连 bgm.tv）：抓取「百合」标签近季新番，发布到 bangumi-data 分支；
+# NAS 侧由 scripts/bangumi-sync.sh 定时拉取并导入数据库（NAS 网络无法直连 bgm.tv）。
+name: bangumi-sync
+
+on:
+  schedule:
+    # 每天 UTC 13:17（北京时间 21:17）
+    - cron: "17 13 * * *"
+  workflow_dispatch: {}
+  push:
+    # 脚本或本工作流变更时自动跑一次，便于验证链路
+    paths:
+      - ".github/workflows/bangumi-sync.yml"
+      - "server/scripts/fetch-bangumi-yuri.mjs"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bangumi-sync
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Fetch bangumi yuri data
+        run: node server/scripts/fetch-bangumi-yuri.mjs --data-dir bangumi-data
+
+      - name: Publish data branch
+        run: |
+          cd bangumi-data
+          git init -q -b bangumi-data
+          git config user.name "bangumi-sync[bot]"
+          git config user.email "bangumi-sync@users.noreply.github.com"
+          git add -A
+          git commit -q -m "data: bangumi sync $(date -u '+%Y-%m-%dT%H:%MZ')"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" bangumi-data
