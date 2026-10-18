@@ -3,7 +3,8 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package.json ./
-RUN npm install --omit=dev
+# 使用国内镜像源，避免部分网络环境下 registry.npmjs.org 解析失败（EAI_AGAIN）
+RUN npm install --omit=dev --registry=https://registry.npmmirror.com
 
 COPY src ./src
 COPY scripts ./scripts
