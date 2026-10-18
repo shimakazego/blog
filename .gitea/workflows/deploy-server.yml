@@ -41,7 +41,7 @@ jobs:
         run: docker build --network=host -t server-app:latest /deploy
 
       - name: 重建应用容器
-        run: docker compose -f /deploy/docker-compose.yml up -d app
+        run: docker compose -p server -f /deploy/docker-compose.yml up -d --no-build app
 
       - name: 验证
         run: |
