@@ -41,7 +41,11 @@ jobs:
         run: docker build --network=host -t server-app:latest /deploy
 
       - name: 重建应用容器
-        run: docker compose -p server -f /deploy/docker-compose.yml up -d --no-build app
+        run: |
+          # 只处理 app 服务（--no-deps），mysql 由 restart 策略自管，不随推送重建；
+          # 必须在宿主机同路径下执行 compose：compose 会按配置文件所在目录解析相对路径
+          # （./sql、.env），若用 /deploy 挂载点执行，相对路径会被解析成容器内路径，导致容器启动失败
+          cd /volume1/docker/blog/server && docker compose -p server up -d --no-build --no-deps app
 
       - name: 验证
         run: |
