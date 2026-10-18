@@ -52,6 +52,16 @@ jobs:
 
       - name: 验证
         run: |
-          sleep 6
-          wget -qO- http://127.0.0.1:3001/api/health
-          echo
+          # 容器重建后服务需要几秒启动，重试等待健康检查通过
+          i=0
+          while [ $i -lt 8 ]; do
+            sleep 5
+            i=$((i+1))
+            if wget -qO- http://127.0.0.1:3001/api/health; then
+              echo
+              echo "health check passed (attempt $i)"
+              exit 0
+            fi
+          done
+          echo "health check failed after 8 attempts"
+          exit 1
