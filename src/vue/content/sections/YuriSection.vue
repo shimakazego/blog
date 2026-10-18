@@ -1,8 +1,25 @@
 <template>
     <PageSection ref="sectionRef"
                  :id="props.id"
-                 variant="default">
+                 variant="default"
+                 class="yuri-section">
         <PageSectionHeader title="百合动漫"/>
+
+        <div class="yuri-quote-banner"
+             role="note"
+             aria-label="版头引言">
+            <img class="yuri-quote-art"
+                 src="/images/yuri/quote-left.png"
+                 alt=""
+                 aria-hidden="true"/>
+            <div class="yuri-quote-body">
+                <p class="yuri-quote-text">“有哪些优秀的百合同人作品？”</p>
+                <p class="yuri-quote-author">——菲尔兹奖得主 邓煜</p>
+            </div>
+            <img class="yuri-quote-portrait"
+                 src="/images/yuri/quote-dengyu.png"
+                 alt="邓煜"/>
+        </div>
 
         <PageSectionContent>
             <div class="yuri-wrap">
@@ -1146,6 +1163,107 @@ onBeforeUnmount(() => {
 .yuri-page-btn:disabled {
     opacity: 0.45;
     cursor: not-allowed;
+}
+
+/* ============ 版头引言 ============ */
+section.yuri-section :deep(.foxy-section-header) {
+    margin-bottom: 1.6rem;
+}
+
+.yuri-quote-banner {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 7.75rem;
+    margin: 0 auto 2rem;
+    border-radius: 1.1rem;
+    overflow: hidden;
+    background: linear-gradient(105deg, #e3c6b0 0%, #d5ab93 42%, #cfa389 68%, #dcb9a1 100%);
+    box-shadow: 0 18px 40px rgba(120, 60, 30, 0.18);
+}
+
+.yuri-quote-art,
+.yuri-quote-portrait {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    width: auto;
+    pointer-events: none;
+    user-select: none;
+}
+
+.yuri-quote-art {
+    left: 0;
+}
+
+.yuri-quote-portrait {
+    right: 0;
+}
+
+.yuri-quote-body {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.85rem 15.5rem 0.85rem 19.5rem;
+}
+
+.yuri-quote-text {
+    margin: 0;
+    font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+    font-size: 1.7rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: #4d3126;
+}
+
+.yuri-quote-author {
+    margin: 0;
+    font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+    font-size: 1.05rem;
+    color: #6d4a38;
+    text-align: right;
+    padding-right: 0.35rem;
+}
+
+@media (max-width: 1199.98px) {
+    .yuri-quote-body {
+        padding: 0.85rem 11rem 0.85rem 15rem;
+    }
+
+    .yuri-quote-text {
+        font-size: 1.45rem;
+    }
+}
+
+@media (max-width: 991.98px) {
+    .yuri-quote-art {
+        display: none;
+    }
+
+    .yuri-quote-body {
+        padding: 0.85rem 11rem 0.85rem 2.5rem;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .yuri-quote-portrait {
+        display: none;
+    }
+
+    .yuri-quote-body {
+        padding: 1rem 1.1rem;
+    }
+
+    .yuri-quote-text {
+        font-size: 1.15rem;
+    }
+
+    .yuri-quote-author {
+        font-size: 0.9rem;
+    }
 }
 
 /* ============ 响应式 ============ */
