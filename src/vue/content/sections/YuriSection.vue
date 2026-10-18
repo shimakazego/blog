@@ -155,7 +155,16 @@
                                     </span>
                                 </div>
 
-                                <p class="yuri-card-summary">{{ work.summary }}</p>
+                                <p class="yuri-card-summary"
+                                   :class="{'is-clamped': summaryNeedsToggle(work) && !isSummaryExpanded(work)}">
+                                    {{ work.summary }}
+                                </p>
+                                <button v-if="summaryNeedsToggle(work)"
+                                        type="button"
+                                        class="yuri-summary-toggle"
+                                        @click="toggleSummary(work)">
+                                    {{ isSummaryExpanded(work) ? "收起" : "展开全文" }}
+                                </button>
 
                                 <dl v-if="work.details.length"
                                     class="yuri-detail-list">
@@ -290,6 +299,32 @@ const pagedWorks = computed(() => {
     const start = (currentPage.value - 1) * PAGE_SIZE
     return yuriWorksState.value.slice(start, start + PAGE_SIZE)
 })
+
+const SUMMARY_COLLAPSE_THRESHOLD = 110
+
+const expandedSummaries = ref(new Set())
+
+function summaryNeedsToggle(work) {
+    return String(work.summary || "").length > SUMMARY_COLLAPSE_THRESHOLD
+}
+
+function isSummaryExpanded(work) {
+    return expandedSummaries.value.has(String(work.id ?? work.name))
+}
+
+function toggleSummary(work) {
+    const key = String(work.id ?? work.name)
+    const next = new Set(expandedSummaries.value)
+
+    if(next.has(key)) {
+        next.delete(key)
+    }
+    else {
+        next.add(key)
+    }
+
+    expandedSummaries.value = next
+}
 
 const visiblePages = computed(() => {
     const pages = []
@@ -1050,6 +1085,28 @@ onBeforeUnmount(() => {
     font-weight: 600;
     font-size: 0.92rem;
     line-height: 1.7;
+}
+
+.yuri-card-summary.is-clamped {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.yuri-summary-toggle {
+    align-self: flex-start;
+    padding: 0;
+    border: none;
+    background: none;
+    color: rgba(157, 23, 77, 0.85);
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.yuri-summary-toggle:hover {
+    text-decoration: underline;
 }
 
 .yuri-detail-list {

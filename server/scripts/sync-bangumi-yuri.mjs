@@ -37,6 +37,15 @@ function formatOneDecimal(value) {
     return Number.isFinite(num) ? num.toFixed(1) : null
 }
 
+// 清洗 BGM 简介：去掉「[简介原文]」及其后的日文原文段，规范化换行
+function cleanSummary(text) {
+    return String(text || "")
+        .split(/\[简介原文\]/)[0]
+        .replace(/\r\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+}
+
 function subjectRating(subject) {
     const score = Number(subject.rating?.score || 0)
     const total = Number(subject.rating?.total || 0)
@@ -96,7 +105,7 @@ const topics = JSON.parse(await fs.readFile(path.join(dataDir, "topics.json"), "
 console.log(`[sync] 数据生成于 ${topics.generatedAt}，共 ${topics.items.length} 条（tag=${topics.tag}, since=${topics.since}）`)
 
 const [dbEntries] = await db.query(
-    "SELECT id, slug, name, title_zh, title_original, douban_subject_id, bangumi_subject_id, score, byline FROM yuri_entries"
+    "SELECT id, slug, name, title_zh, title_original, douban_subject_id, bangumi_subject_id, score, byline, summary FROM yuri_entries"
 )
 const [categoryRows] = await db.query("SELECT id FROM categories WHERE slug = 'yuri' AND type = 'yuri_entry' LIMIT 1")
 const categoryId = categoryRows[0]?.id
@@ -199,8 +208,24 @@ try {
         const rating = subjectRating(subject)
         const scoreText = rating.score !== null ? formatOneDecimal(rating.score) : null
         const byline = rating.score !== null ? `Bangumi ${scoreText} / ${rating.total ?? 0} ratings` : "Bangumi entry"
-        if((entry.score ?? null) !== scoreText || (entry.byline ?? null) !== byline) {
-            await connection.query("UPDATE yuri_entries SET score = ?, byline = ? WHERE id = ?", [scoreText, byline, entry.id])
+        const newSummary = cleanSummary(subject.summary) || null
+
+        const updates = []
+        const params = []
+        if((entry.score ?? null) !== scoreText) {
+            updates.push("score = ?")
+            params.push(scoreText)
+        }
+        if((entry.byline ?? null) !== byline) {
+            updates.push("byline = ?")
+            params.push(byline)
+        }
+        if((entry.summary ?? null) !== newSummary) {
+            updates.push("summary = ?")
+            params.push(newSummary)
+        }
+        if(updates.length) {
+            await connection.query(`UPDATE yuri_entries SET ${updates.join(", ")} WHERE id = ?`, [...params, entry.id])
             refreshedEntries += 1
         }
         const [snapResult] = await connection.query(
@@ -249,7 +274,7 @@ try {
                 platformToEntryType(subject.platform),
                 year,
                 byline,
-                String(subject.summary || "").trim() || null,
+                cleanSummary(subject.summary) || null,
                 bgmUrl,
                 externalCoverUrl,
                 scoreText,
