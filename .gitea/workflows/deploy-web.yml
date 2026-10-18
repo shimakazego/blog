@@ -10,11 +10,17 @@ on:
       - 'vite.config.js'
       - 'package.json'
       - 'package-lock.json'
+      - '.gitea/workflows/deploy-web.yml'
   workflow_dispatch:
 
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
+    container:
+      # 显式指定轩辕镜像的 node 基础镜像 + 挂载宿主机持久构建缓存
+      # （缓存路径需在 runner 配置 valid_volumes 中；挂载失败时逻辑自动降级为普通 npm ci）
+      image: docker.xuanyuan.run/library/node:20-alpine
+      options: --volume /volume1/docker/ci-cache:/ci-cache
     env:
       GIT_TERMINAL_PROMPT: "0"
 
@@ -24,18 +30,35 @@ jobs:
 
     steps:
       - name: 准备工具
-        run: apk add --no-cache git rsync
+        run: |
+          # 换国内镜像源，避免 apk 从 dl-cdn.alpinelinux.org 慢速下载（大瓶颈）
+          sed -i 's#dl-cdn.alpinelinux.org#mirrors.aliyun.com#' /etc/apk/repositories
+          apk add --no-cache git rsync
 
       - name: 拉取代码
         run: |
           rm -rf /work
           git clone --depth 1 "http://ljx:${{ secrets.GITEA_TOKEN }}@127.0.0.1:3000/ljx/blog.git" /work
 
-      - name: 安装依赖并构建
+      - name: 安装依赖（持久缓存：lock 未变直接复用 node_modules）
         working-directory: /work
         run: |
-          npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com
-          npm run build
+          mkdir -p /ci-cache/npm
+          LOCK_HASH=$(md5sum package-lock.json | cut -d' ' -f1)
+          if [ -d /ci-cache/node_modules ] && [ -f /ci-cache/lock.hash ] && [ "$(cat /ci-cache/lock.hash)" = "$LOCK_HASH" ]; then
+            echo "cache hit (lock=$LOCK_HASH)，跳过 npm ci"
+            ln -s /ci-cache/node_modules node_modules
+          else
+            echo "cache miss (lock=$LOCK_HASH)，执行 npm ci（npmmirror + tarball 缓存）"
+            npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com --cache /ci-cache/npm --prefer-offline
+            rm -rf /ci-cache/node_modules
+            cp -a node_modules /ci-cache/node_modules
+            echo "$LOCK_HASH" > /ci-cache/lock.hash
+          fi
+
+      - name: 构建
+        working-directory: /work
+        run: npm run build
 
       - name: 部署到 nginx-test（备份 + 后端图片同步）
         run: |
