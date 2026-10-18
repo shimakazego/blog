@@ -156,14 +156,20 @@
                                 </div>
 
                                 <p class="yuri-card-summary"
-                                   :class="{'is-clamped': summaryNeedsToggle(work) && !isSummaryExpanded(work)}">
+                                   :class="{
+                                       'is-clamped': summaryNeedsToggle(work) && !isSummaryExpanded(work),
+                                       'is-expanded': summaryNeedsToggle(work) && isSummaryExpanded(work)
+                                   }">
                                     {{ work.summary }}
                                 </p>
                                 <button v-if="summaryNeedsToggle(work)"
                                         type="button"
                                         class="yuri-summary-toggle"
+                                        :class="{'is-expanded': isSummaryExpanded(work)}"
+                                        :aria-expanded="isSummaryExpanded(work) ? 'true' : 'false'"
                                         @click="toggleSummary(work)">
-                                    {{ isSummaryExpanded(work) ? "收起" : "展开全文" }}
+                                    <span>{{ isSummaryExpanded(work) ? "收起" : "展开全文" }}</span>
+                                    <i class="pi pi-chevron-down"/>
                                 </button>
 
                                 <dl v-if="work.details.length"
@@ -1080,33 +1086,66 @@ onBeforeUnmount(() => {
 }
 
 .yuri-card-summary {
+    position: relative;
     margin: 0;
     color: rgba(76, 5, 25, 0.86);
     font-weight: 600;
     font-size: 0.92rem;
     line-height: 1.7;
+    overflow: hidden;
+    transition: max-height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .yuri-card-summary.is-clamped {
-    display: -webkit-box;
-    -webkit-line-clamp: 4;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    max-height: 6.4rem;
+}
+
+.yuri-card-summary.is-expanded {
+    max-height: 90rem;
+}
+
+.yuri-card-summary.is-clamped::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2.8rem;
+    background: linear-gradient(to bottom, rgba(253, 242, 248, 0), #fdf2f8);
+    pointer-events: none;
 }
 
 .yuri-summary-toggle {
     align-self: flex-start;
-    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.65rem;
     border: none;
-    background: none;
-    color: rgba(157, 23, 77, 0.85);
-    font-size: 0.8rem;
+    border-radius: 999px;
+    background: rgba(219, 39, 119, 0.08);
+    color: rgba(157, 23, 77, 0.92);
+    font-size: 0.78rem;
     font-weight: 700;
     cursor: pointer;
+    transition: background 0.2s ease, transform 0.2s ease;
 }
 
 .yuri-summary-toggle:hover {
-    text-decoration: underline;
+    background: rgba(219, 39, 119, 0.16);
+}
+
+.yuri-summary-toggle:active {
+    transform: scale(0.97);
+}
+
+.yuri-summary-toggle .pi {
+    font-size: 0.68rem;
+    transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.yuri-summary-toggle.is-expanded .pi {
+    transform: rotate(-180deg);
 }
 
 .yuri-detail-list {
