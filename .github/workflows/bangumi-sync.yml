@@ -23,6 +23,8 @@ concurrency:
 
 jobs:
   fetch:
+    # 仅 GitHub 运行（Gitea Actions 下跳过：NAS 网络无法直连 bgm.tv，数据同步走 NAS 侧 scripts/bangumi-sync.sh）
+    if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
