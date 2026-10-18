@@ -54,10 +54,6 @@ export function environmentBuffSourceKey(kind: EnvironmentBuffKind, id: string):
   return `defense-buff-${id}`
 }
 
-export function isBossFieldSourceKey(sourceKey: string): boolean {
-  return sourceKey.startsWith('boss-field-') || sourceKey.startsWith('deduction-field-')
-}
-
 export function parseBossFieldBossName(sourceKey: string): string | null {
   if (sourceKey.startsWith('boss-field-')) {
     return sourceKey.slice('boss-field-'.length) || null
@@ -172,33 +168,13 @@ export function listDefenseEnvironmentBuffs(
       }> = []
 
       if (room.roomBuff?.name && !room.roomBuff.isEmpty) {
-        let effectBlocks = room.roomBuff.effectBlocks
-        if (
-          !effectBlocks?.length &&
-          room.roomBuff.recordId != null &&
-          room.zoneBuffRecords?.length
-        ) {
-          const zoneMatch = room.zoneBuffRecords.find(
-            (zone) => zone.recordId === room.roomBuff.recordId && zone.effectBlocks?.length,
-          )
-          if (zoneMatch) effectBlocks = zoneMatch.effectBlocks
-        }
         candidates.push({
           recordId: room.roomBuff.recordId,
           name: room.roomBuff.name,
           imageUrl: room.roomBuff.imageUrl,
           text: room.roomBuff.buffText,
           lines: room.roomBuff.lines,
-          effectBlocks,
-        })
-      }
-      for (const zone of room.zoneBuffRecords ?? []) {
-        if (!zone.buffName && !zone.buffText) continue
-        candidates.push({
-          recordId: zone.recordId,
-          name: zone.buffName || `区域 Buff ${zone.buffIndex}`,
-          text: zone.buffText,
-          effectBlocks: zone.effectBlocks,
+          effectBlocks: room.roomBuff.effectBlocks,
         })
       }
 
@@ -343,28 +319,3 @@ export function listDefenseEnvFrontierFilterOptions(
   }))
 }
 
-export function listCrisisPhaseOptions(phases: PhaseData[]): { version: string; phase: string; id: string; label: string }[] {
-  return phases.map((phase) => {
-    const phaseNum = phase.phase.replace(/\D/g, '') || phase.phase
-    return {
-      version: phase.version,
-      phase: phaseNum,
-      id: phase.id,
-      label: `${phase.version} 第${phaseNum}期`,
-    }
-  })
-}
-
-export function listDefenseSeasonOptions(
-  seasons: DefenseSeason[],
-): { version: string; phase: string; id: string; label: string }[] {
-  return seasons.map((season) => {
-    const phaseNum = season.phase.replace(/\D/g, '') || season.phase
-    return {
-      version: season.version,
-      phase: phaseNum,
-      id: season.seasonId,
-      label: `${season.version} 第${phaseNum}期`,
-    }
-  })
-}

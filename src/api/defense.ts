@@ -21,7 +21,7 @@ import { getAdminToken, isAdminAuthenticated } from '@/utils/adminAuth'
 
 export { filterChartPointsByLabels }
 
-interface ApiDefenseSeason extends DefenseSeason {}
+type ApiDefenseSeason = DefenseSeason
 
 interface ApiResponse {
   code: number
@@ -69,7 +69,7 @@ function normalizeSeason(season: DefenseSeason): DefenseSeason {
 }
 
 export async function fetchDefenseSeasons(variant: DefenseVariant): Promise<DefenseSeason[]> {
-  const response = await fetch(`/api/zzz/zzz/defense/seasons?variant=${variant}`, {
+  const response = await fetch(`/api/zzz/defense/seasons?variant=${variant}`, {
     headers: adminAuthHeaders(),
   })
   if (!response.ok) {

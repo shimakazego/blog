@@ -5,6 +5,7 @@ import NumberStepper from '@/components/common/NumberStepper.vue'
 import type {
   BuffEffect,
   BuffEffectBlock,
+  BuffScope,
   BuffSkillTarget,
   BuffSkillTargetId,
   SkillCategoryId,
@@ -12,7 +13,7 @@ import type {
 } from '@/types/calculator'
 import {
   BUFF_SKILL_TARGET_OPTIONS,
-  CHARACTER_ATTR_OPTIONS,
+  CONVERT_FROM_OPTIONS,
   CONVERT_PANEL_SOURCE_OPTIONS,
   BUFF_SCOPE_OPTIONS,
   SKILL_CATEGORY_OPTIONS,
@@ -32,9 +33,11 @@ import {
   getEffectSkillTargets,
   normalizeTeamProfessionValues,
   packFromBlocks,
+  resolveConvertValue,
   setEffectSkillTargets,
 } from '@/utils/buffEffect'
 import { useCalculatorBuffStore } from '@/stores/calculatorBuffs'
+import { buffScopeLabel, hasBuffScope, isGeneralScope, normalizeBuffScopes, toggleBuffScope } from '@/utils/buffScope'
 import { createDefaultSkillSubcategoryMults } from '@/utils/skillSubcategoryMult'
 
 const props = defineProps<{
@@ -94,7 +97,7 @@ const followUpSubcategories = computed(() => {
   })
 })
 
-function skillTargetOptionsFor(_effect: BuffEffect) {
+function skillTargetOptionsFor() {
   return BUFF_SKILL_TARGET_OPTIONS
 }
 
@@ -236,7 +239,7 @@ function statFieldsFor(effect: BuffEffect) {
       ? fields.filter((field) => field.key === 'energyRegen')
       : fields
   const base =
-    effect.scope === 'skill'
+    hasBuffScope(effect.scope, 'skill')
       ? filterEnergyRegen([...SKILL_BUFF_STAT_FIELDS, ...GENERAL_BUFF_STAT_FIELDS])
       : filterEnergyRegen(
           GENERAL_BUFF_STAT_FIELDS.length ? GENERAL_BUFF_STAT_FIELDS : BUFF_STAT_FIELDS,
@@ -317,8 +320,24 @@ function removeEffect(block: BuffEffectBlock, effectIndex: number) {
   block.effects.splice(effectIndex, 1)
 }
 
+/** 作用域（数组口径）：勾选/取消一个成员；「通用」与具体项互斥（见 `toggleBuffScope`） */
+function onScopeToggle(effect: BuffEffect, id: BuffScope, checked: boolean) {
+  effect.scope = toggleBuffScope(effect.scope, id, checked)
+  onScopeChange(effect)
+}
+
+function isScopeChecked(effect: BuffEffect, id: BuffScope): boolean {
+  return normalizeBuffScopes(effect.scope).includes(id)
+}
+
+/** 只有「通用」时，具体项禁用（通用已覆盖全部） */
+function isScopeLockedToGeneral(effect: BuffEffect): boolean {
+  return isGeneralScope(effect.scope)
+}
+
 function onScopeChange(effect: BuffEffect) {
-  if (effect.scope === 'skill') {
+  // 数组口径：任一成员命中就走对应分支（skill 优先，因为它要挂锚点）
+  if (hasBuffScope(effect.scope, 'skill')) {
     const targets = getEffectSkillTargets(effect)
     if (!targets.length) {
       setEffectSkillTargets(effect, [{ category: 'basic', subcategoryId: null }])
@@ -330,23 +349,16 @@ function onScopeChange(effect: BuffEffect) {
     }
     return
   }
-  if (
-    effect.scope === 'anomaly' ||
-    effect.scope === 'disorder' ||
-    effect.scope === 'turbulence' ||
-    effect.scope === 'anomalyRelease'
-  ) {
-    setEffectSkillTargets(effect, [])
+  setEffectSkillTargets(effect, [])
+  if (isAnomalyDamageScope(effect.scope)) {
     effect.appliesToAnomaly = undefined
   }
 }
 
 function isAnomalyDamageScope(scope: BuffEffect['scope']) {
-  return (
-    scope === 'anomaly' ||
-    scope === 'disorder' ||
-    scope === 'turbulence' ||
-    scope === 'anomalyRelease'
+  return normalizeBuffScopes(scope).some(
+    (id) =>
+      id === 'anomaly' || id === 'disorder' || id === 'turbulence' || id === 'anomalyRelease',
   )
 }
 
@@ -428,7 +440,7 @@ function convertPreviewText(effect: BuffEffect): string {
   const convert = effect.convert
   if (!convert) return ''
   const attrLabel =
-    CHARACTER_ATTR_OPTIONS.find((item) => item.id === convert.from)?.label ?? convert.from
+    CONVERT_FROM_OPTIONS.find((item) => item.id === convert.from)?.label ?? convert.from
   const statLabel = buffStatFieldLabel(
     BUFF_STAT_FIELDS.find((item) => item.key === effect.stat) ?? BUFF_STAT_FIELDS[0]!,
   )
@@ -437,19 +449,18 @@ function convertPreviewText(effect: BuffEffect): string {
     initial > 0 ? `，超出初始值 ${formatCalcDecimal(initial)} 的部分参与折算` : ''
   if (convert.panelSource === 'manual') {
     const base = convert.defaultBase ?? 0
-    const excess = Math.max(0, base - initial)
-    let amount = (excess * (convert.ratioPercent ?? 0)) / 100
-    let capped = false
-    if (convert.cap != null && Number.isFinite(convert.cap) && amount > convert.cap) {
-      amount = convert.cap
-      capped = true
-    }
+    const amount = resolveConvertValue(effect, {})
+    const uncappedAmount = resolveConvertValue(
+      { ...effect, convert: { ...convert, cap: null } },
+      {},
+    )
+    const capped = amount !== uncappedAmount
     const rounded = formatCalcDecimal(amount)
     const baseExpr =
       initial > 0
         ? `max(0, ${formatCalcDecimal(base)} − ${formatCalcDecimal(initial)})`
         : formatCalcDecimal(base)
-    return `${attrLabel} ${baseExpr} × ${formatCalcDecimal(convert.ratioPercent ?? 0)}% = ${statLabel} +${rounded}${capped ? '（已达上限）' : ''}${initialHint}`
+    return `${attrLabel} ${baseExpr} × ${formatCalcDecimal(convert.ratioPercent ?? 0)}% = ${statLabel} ${amount < 0 ? '' : '+'}${rounded}${capped ? '（已达上限）' : ''}${initialHint}`
   }
   const sourceLabel = convert.panelSource === 'final' ? '局内' : '局外'
   return `${sourceLabel}${attrLabel} × ${formatCalcDecimal(convert.ratioPercent ?? 0)}% → ${statLabel}，超出初始值部分实时折算${initialHint}`
@@ -545,18 +556,35 @@ defineExpose({
             </select>
           </label>
 
-          <label class="field">
-            <span>作用域</span>
-            <select v-model="effect.scope" @change="onScopeChange(effect)">
-              <option
-                v-for="opt in BUFF_SCOPE_OPTIONS"
+          <div class="field field-span">
+            <span>作用域（可多选）· 当前：{{ buffScopeLabel(effect.scope) }}</span>
+            <div class="chip-row">
+              <label class="chip">
+                <input
+                  :key="isScopeChecked(effect, 'general') ? 'on' : 'off'"
+                  type="checkbox"
+                  :checked="isScopeChecked(effect, 'general')"
+                  @change="onScopeToggle(effect, 'general', ($event.target as HTMLInputElement).checked)"
+                />
+                <span>通用</span>
+              </label>
+              <label
+                v-for="opt in BUFF_SCOPE_OPTIONS.filter((item) => item.id !== 'general')"
                 :key="opt.id"
-                :value="opt.id"
+                class="chip"
+                :class="{ 'chip-muted': isScopeLockedToGeneral(effect) }"
+                :title="isScopeLockedToGeneral(effect) ? '当前是「通用」（已覆盖全部子类）；点具体项会自动取消通用' : ''"
               >
-                {{ opt.label }}
-              </option>
-            </select>
-          </label>
+                <input
+                  :key="isScopeChecked(effect, opt.id) ? 'on' : 'off'"
+                  type="checkbox"
+                  :checked="isScopeChecked(effect, opt.id)"
+                  @change="onScopeToggle(effect, opt.id, ($event.target as HTMLInputElement).checked)"
+                />
+                <span>{{ opt.label }}</span>
+              </label>
+            </div>
+          </div>
 
           <label v-if="!lockApplyTarget" class="field">
             <span>目标</span>
@@ -629,7 +657,7 @@ defineExpose({
             </div>
           </div>
 
-          <template v-if="effect.scope === 'skill'">
+          <template v-if="hasBuffScope(effect.scope, 'skill')">
             <div class="field field-span">
               <span>已选招式（可多选，按顺序展示）</span>
               <div class="chip-row">
@@ -664,7 +692,7 @@ defineExpose({
                 "
               >
                 <option
-                  v-for="opt in skillTargetOptionsFor(effect)"
+                  v-for="opt in skillTargetOptionsFor()"
                   :key="opt.id"
                   :value="opt.id"
                 >
@@ -862,7 +890,7 @@ defineExpose({
           <label class="field">
             <span>来源属性</span>
             <select v-model="ensureConvert(effect).from">
-              <option v-for="opt in CHARACTER_ATTR_OPTIONS" :key="opt.id" :value="opt.id">
+              <option v-for="opt in CONVERT_FROM_OPTIONS" :key="opt.id" :value="opt.id">
                 {{ opt.label }}
               </option>
             </select>
@@ -1163,6 +1191,11 @@ defineExpose({
   padding: 0.2rem 0.45rem 0.2rem 0.55rem;
   font-size: 0.74rem;
   background: color-mix(in srgb, var(--color-background) 80%, var(--color-border));
+}
+
+/* 作用域多选：当前是「通用」时具体项**提示性**变淡（仍可点，点了会自动取消通用） */
+.chip-muted {
+  opacity: 0.72;
 }
 
 .chip-remove {

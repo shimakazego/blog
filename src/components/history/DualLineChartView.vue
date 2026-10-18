@@ -53,6 +53,11 @@ const props = withDefaults(
     enableHpCoeffCharts?: boolean
     /** 去掉外框边线 */
     borderless?: boolean
+    /**
+     * 整页滚动形态：纵向滚轮交给页面，面板内只保留横向拖拽视口，图表高度改以窗口高度为基准。
+     * 默认 false 保持「面板内小视口滚动」的既有形态。
+     */
+    pageScroll?: boolean
   }>(),
   {
     hpChartTitle: '血量折线图',
@@ -73,6 +78,7 @@ const props = withDefaults(
     enableScoreHpOverlays: false,
     enableHpCoeffCharts: false,
     borderless: false,
+    pageScroll: false,
   },
 )
 
@@ -1205,8 +1211,11 @@ function updateLayoutMetrics() {
   const stackPad = 16
   // 横向滚动条预留，避免压住下方期数标签
   const scrollbarReserve = isDetailMode.value ? 14 : 0
+  // 整页滚动形态下容器高度由内容（含图表高度）决定，不能当基准：
+  // 否则「容器高度 → 图表高度 → 容器高度」形成反馈环，故改用窗口高度
+  const layoutHeight = props.pageScroll ? window.innerHeight : containerRef.value.clientHeight
   const available =
-    containerRef.value.clientHeight -
+    layoutHeight -
     toolbarHeight -
     visibilityHeight -
     hintHeight -
@@ -1231,6 +1240,20 @@ let resizeObserver: ResizeObserver | null = null
 let scrollElement: HTMLElement | null = null
 let narrowMq: MediaQueryList | null = null
 
+/** 整页滚动形态下图表高度以窗口高度为基准，窗口变化必须重算；面板内形态由 containerRef 的 ResizeObserver 覆盖 */
+function onWindowResize() {
+  if (props.pageScroll) updateLayoutMetrics()
+  updateBossTooltipPosition()
+}
+
+/**
+ * 小窗是 `position: fixed`：整页滚动形态下页面一滚，图表会从锚点下方移走，
+ * 而 `.charts-scroll` 的 scroll 事件只在面板内部滚动时触发，故需在捕获阶段听整页滚动。
+ */
+function onPageScroll() {
+  updateBossTooltipPosition()
+}
+
 onMounted(() => {
   syncNarrowViewport()
   narrowMq = window.matchMedia('(max-width: 768px)')
@@ -1241,21 +1264,26 @@ onMounted(() => {
     updateLayoutMetrics()
     updateBossTooltipPosition()
   })
-  resizeObserver.observe(containerRef.value)
+  // 整页滚动形态下容器高度 = 内容高度（含图表高度），观察它会重新引入反馈环
+  if (!props.pageScroll) resizeObserver.observe(containerRef.value)
   if (scrollRef.value) {
     resizeObserver.observe(scrollRef.value)
     scrollElement = scrollRef.value
     scrollElement.addEventListener('scroll', onLinkedScroll, { passive: true })
   }
-  window.addEventListener('resize', updateBossTooltipPosition)
+  window.addEventListener('resize', onWindowResize)
   window.addEventListener('keydown', onChartKeydown)
+  if (props.pageScroll) {
+    window.addEventListener('scroll', onPageScroll, { passive: true, capture: true })
+  }
 })
 
 onUnmounted(() => {
   narrowMq?.removeEventListener('change', syncNarrowViewport)
   resizeObserver?.disconnect()
-  window.removeEventListener('resize', updateBossTooltipPosition)
+  window.removeEventListener('resize', onWindowResize)
   window.removeEventListener('keydown', onChartKeydown)
+  window.removeEventListener('scroll', onPageScroll, { capture: true })
   scrollElement?.removeEventListener('scroll', onLinkedScroll)
   if (scrollSyncRaf) cancelAnimationFrame(scrollSyncRaf)
 })
@@ -1442,7 +1470,7 @@ watch(phaseSearchQuery, () => {
     v-if="shouldRenderChart"
     ref="containerRef"
     class="charts-panel"
-    :class="{ 'charts-panel--borderless': borderless }"
+    :class="{ 'charts-panel--borderless': borderless, 'charts-panel--page': pageScroll }"
   >
     <div class="chart-toolbar">
       <div class="toolbar-main">
@@ -1581,6 +1609,7 @@ watch(phaseSearchQuery, () => {
       :class="{
         'is-dragging': isDragging,
         'charts-scroll--overview': isOverviewMode,
+        'charts-scroll--page': pageScroll,
       }"
       @pointerdown="onPointerDown"
       @pointermove="onScrollAreaPointerMove"
@@ -1589,7 +1618,10 @@ watch(phaseSearchQuery, () => {
       @pointerleave="clearHover"
       @wheel="onWheel"
     >
-      <div class="charts-stack" :class="{ 'charts-stack--overview': isOverviewMode }">
+      <div
+        class="charts-stack"
+        :class="{ 'charts-stack--overview': isOverviewMode, 'charts-stack--page': pageScroll }"
+      >
         <section
           v-if="isSectionVisible('hp')"
           class="chart-section"
@@ -2542,6 +2574,12 @@ watch(phaseSearchQuery, () => {
   background: transparent;
 }
 
+/* 整页滚动形态：面板高度交给内容，纵向溢出交给宿主页面 */
+.charts-panel--page {
+  flex: none;
+  overflow: visible;
+}
+
 .chart-toolbar {
   flex-shrink: 0;
   display: flex;
@@ -2685,6 +2723,19 @@ watch(phaseSearchQuery, () => {
   touch-action: auto;
 }
 
+/*
+ * 整页滚动形态：保留横向拖拽视口，纵向交给页面。
+ * `overflow-x: auto` 与 `overflow-y: visible` 在 CSS 里不可共存（一侧非 visible 时另一侧会算成 auto），
+ * 因此纵向只能取 `hidden` —— 高度由内容撑开，本就没有纵向溢出可裁。
+ * 这段必须排在 `.charts-scroll--overview` 之后，二者同时命中时由它决定溢出轴。
+ */
+.charts-scroll--page {
+  flex: none;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .charts-scroll::-webkit-scrollbar {
   height: 10px;
   width: 10px;
@@ -2717,6 +2768,11 @@ watch(phaseSearchQuery, () => {
 
 .charts-stack--overview {
   width: 100%;
+}
+
+/* 整页滚动形态：高度由各图固有像素高度累积，不再需要撑满滚动视口 */
+.charts-stack--page {
+  min-height: 0;
 }
 
 .chart-section {

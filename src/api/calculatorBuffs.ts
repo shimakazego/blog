@@ -7,10 +7,11 @@ import type {
   DriveDiscBuffDoc,
   FollowUpSkillRule,
   Skill,
+  SkillGroup,
   SkillSubcategory,
   WengineBuffDoc,
 } from '@/types/calculator'
-import { withAdminAuthHeaders } from '@/utils/adminAuth'
+import { handleAdminSessionExpired, withAdminAuthHeaders } from '@/utils/adminAuth'
 
 interface ApiResponse<T> {
   code: number
@@ -46,10 +47,15 @@ async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T
     throw new CalculatorBuffApiError(`请求失败: ${response.status}`, response.status)
   }
   if (!response.ok || json.code !== 200) {
+    const apiCode = readApiCode(json.data)
+    // 会话已被服务器判死：同步清掉本地登录态，路由守卫才不会拿旧标记拦人
+    if (response.status === 401 || apiCode === 'ADMIN_AUTH_REQUIRED') {
+      handleAdminSessionExpired()
+    }
     throw new CalculatorBuffApiError(
       json.message || `请求失败: ${response.status}`,
       response.status,
-      readApiCode(json.data),
+      apiCode,
     )
   }
   return json.data
@@ -111,6 +117,25 @@ export async function deletePresetSkill(id: string): Promise<void> {
   await requestJson<{ id: string }>(`/api/zzz/calculator-buffs/skills/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   })
+}
+
+export async function fetchPresetSkillGroups(): Promise<SkillGroup[]> {
+  return requestJson<SkillGroup[]>('/api/zzz/calculator-buffs/skill-groups')
+}
+
+export async function savePresetSkillGroup(doc: SkillGroup): Promise<SkillGroup> {
+  return requestJson<SkillGroup>('/api/zzz/calculator-buffs/skill-groups', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(doc),
+  })
+}
+
+export async function deletePresetSkillGroup(id: string): Promise<void> {
+  await requestJson<{ id: string }>(
+    `/api/zzz/calculator-buffs/skill-groups/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  )
 }
 
 export async function saveFollowUpSkillRule(

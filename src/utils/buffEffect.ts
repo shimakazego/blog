@@ -13,37 +13,23 @@ import type {
   BuffStatKey,
   BuffStatModifiers,
   CharacterAttrKey,
+  ConvertFromKey,
   FollowUpSkillRule,
   SkillCalcContext,
   SkillMatchCoord,
   SkillCategoryId,
   SkillSubcategory,
 } from '@/types/calculator'
-import { CHARACTER_ATTR_OPTIONS } from '@/types/calculator'
+import { CONVERT_FROM_OPTIONS } from '@/types/calculator'
+import { buffScopeLabel, hasBuffScope, normalizeBuffScopes } from '@/utils/buffScope'
 import { isLuminousElement } from '@/utils/remielUtils'
+import {
+  isSkillConvertFromKey,
+  SKILL_CONVERT_FROM_TO_TALENT_KEY,
+  type SkillTalentLevels,
+} from '@/utils/skillTalentLevels'
 import { formatCalcDecimal, roundCalc } from '@/utils/calcNumberFormat'
-
-const BUFF_SCOPE_SET = new Set<string>([
-  'general',
-  'skill',
-  'anomaly',
-  'disorder',
-  'turbulence',
-  'anomalyRelease',
-  'radiance',
-  'mutation',
-])
-
-const BUFF_SCOPE_LABELS: Record<string, string> = {
-  general: '通用',
-  skill: '招式',
-  anomaly: '异常',
-  disorder: '紊乱',
-  turbulence: '乱流',
-  anomalyRelease: '异放',
-  radiance: '耀变',
-  mutation: '异化系数',
-}
+import { normalizeBuffMultFactorDelta } from '@/utils/multFactorPercent'
 
 function isAnomalyDamageScope(scope: BuffScope): boolean {
   return (
@@ -87,6 +73,7 @@ const BUFF_STAT_KEYS: BuffStatKey[] = [
   'energyRegenFlat',
   'pierce',
   'pierceDmgBonus',
+  'sharpenDmgBonus',
   'sharpenCritDmgBonus',
   'dmgPenalty',
   'vulnerable',
@@ -183,7 +170,11 @@ const BUFF_MULT_FACTOR_KEYS: BuffStatKey[] = [
   'anomalyReleaseMultFactor',
   'disorderBaseMultFactor',
   'turbulenceBaseMultFactor',
+  'radianceMultFactor',
+  'specialMultFactor',
+  'mutationCoeffFactor',
 ]
+
 
 function isBuffMultFactorKey(key: string): boolean {
   return (BUFF_MULT_FACTOR_KEYS as string[]).includes(key)
@@ -234,7 +225,7 @@ export function normalizeTeamProfessionValues(
 }
 
 export function createEmptyBuffEffect(
-  overrides: Partial<BuffEffect> = {},
+  overrides: Partial<Omit<BuffEffect, 'scope'>> & { scope?: BuffScope | BuffScope[] } = {},
 ): BuffEffect {
   const skillTargets = normalizeSkillTargets(
     overrides.skillTargets,
@@ -245,7 +236,7 @@ export function createEmptyBuffEffect(
   return {
     id: overrides.id ?? newEffectId(),
     origin: overrides.origin ?? '',
-    scope: overrides.scope ?? 'general',
+    scope: normalizeBuffScopes(overrides.scope),
     applyTarget: overrides.applyTarget ?? 'self',
     applySituation: overrides.applySituation ?? 'global',
     applyProfession:
@@ -339,7 +330,7 @@ function normalizeSkillTargets(
 export function flatModsToEffects(
   mods: BuffStatModifiers,
   applyTarget: BuffApplyTarget,
-  scope: BuffScope = 'general',
+  scope: BuffScope | BuffScope[] = 'general',
   idPrefix = '',
 ): BuffEffect[] {
   const effects: BuffEffect[] = []
@@ -398,7 +389,7 @@ export function effectsToFlatMods(
   let total = emptyMods()
   for (const effect of effects) {
     if (applyTarget && effect.applyTarget !== applyTarget) continue
-    if (effect.scope !== 'general') continue
+    if (!hasBuffScope(effect.scope, 'general')) continue
     const amount = resolveEffectBaseValue(effect, effect.defaultStacks ?? 1)
     if (isBuffMultFactorKey(effect.stat)) {
       if (!Number.isFinite(amount) || Math.abs(amount) < 1e-12) continue
@@ -440,11 +431,26 @@ export function resolveConvertValue(
     external?: Partial<Record<CharacterAttrKey, number>>
     final?: Partial<Record<CharacterAttrKey, number>>
   },
+  /** 技能等级转模来源：来源角色的五大类技能等级 */
+  skillTalentLevels?: Partial<SkillTalentLevels> | null,
 ): number {
   if (effect.kind !== 'convert' || !effect.convert) return 0
   const source = effect.convert.panelSource ?? 'external'
   let from: number
-  if (source === 'manual') {
+  if (isSkillConvertFromKey(effect.convert.from)) {
+    // 技能等级来源：等级表取来源角色对应大类等级；manual 仍用输入/默认基础值
+    if (source === 'manual') {
+      from =
+        overrideBase != null && Number.isFinite(overrideBase)
+          ? overrideBase
+          : effect.convert.defaultBase != null && Number.isFinite(effect.convert.defaultBase)
+            ? effect.convert.defaultBase
+            : 0
+    } else {
+      const talentKey = SKILL_CONVERT_FROM_TO_TALENT_KEY[effect.convert.from]
+      from = skillTalentLevels?.[talentKey] ?? 0
+    }
+  } else if (source === 'manual') {
     // 自行设置：不读面板，优先用计算页输入，其次配置的 defaultBase
     from =
       overrideBase != null && Number.isFinite(overrideBase)
@@ -469,18 +475,36 @@ export function resolveConvertValue(
   const convertible = Math.max(0, from - initialBase)
   let amount = (convertible * effect.convert.ratioPercent) / 100
   if (effect.convert.cap != null && Number.isFinite(effect.convert.cap)) {
-    amount = Math.min(amount, effect.convert.cap)
+    const magnitudeCap = Math.abs(effect.convert.cap)
+    amount = Math.max(-magnitudeCap, Math.min(amount, magnitudeCap))
   }
   // 转模结果统一到 4 位小数，与界面展示一致
   return roundCalc(amount)
 }
 
+/**
+ * 作用域生效判定（**数组口径**：任一成员命中即生效）。
+ *
+ * 与「把 `scope: ['a','b']` 拆成两条单值行」完全等价：逐成员跑同一个单值判定，
+ * 任一为真即真（`singleScopeMatchesContext` 就是改造前的整段单值逻辑）。
+ */
 export function effectMatchesContext(
   effect: BuffEffect,
   ctx: SkillCalcContext | null | undefined,
 ): boolean {
+  return normalizeBuffScopes(effect.scope).some((scope) =>
+    singleScopeMatchesContext(effect, ctx, scope),
+  )
+}
+
+/** 单值作用域判定（改造前 `effectMatchesContext` 的原逻辑，逐字保留语义） */
+function singleScopeMatchesContext(
+  effect: BuffEffect,
+  ctx: SkillCalcContext | null | undefined,
+  scope: BuffScope,
+): boolean {
   if (!ctx) {
-    return effect.scope === 'general'
+    return scope === 'general'
   }
 
   const situation = effect.applySituation ?? 'global'
@@ -497,8 +521,6 @@ export function effectMatchesContext(
   ) {
     return false
   }
-
-  const scope = effect.scope
 
   if (scope === 'mutation') {
     return ctx.damageKind === 'anomaly'
@@ -653,25 +675,6 @@ export function effectMatchesTeamProfessionGate(
   return thresholds.includes(teamProfessionCount)
 }
 
-/**
- * @deprecated 人数条件不再覆盖数值；请用 effectMatchesTeamProfessionGate。
- * 保留：不满足条件 → null；满足 → undefined（继续走固定/叠层/转模自身数值）。
- */
-export function resolveTeamProfessionAmount(
-  effect: Pick<
-    BuffEffect,
-    | 'kind'
-    | 'teamProfession'
-    | 'teamProfessionValues'
-    | 'teamProfessionMinCount'
-    | 'value'
-  >,
-  teamProfessionCount: number,
-): number | null | undefined {
-  if (!effectMatchesTeamProfessionGate(effect, teamProfessionCount)) return null
-  return undefined
-}
-
 export function formatTeamProfessionGateLabel(
   effect: Pick<
     BuffEffect,
@@ -715,37 +718,12 @@ export function formatElementFilterLabel(
   return `[${names.join('、')}]`
 }
 
-export function filterEffects(
-  effects: BuffEffect[],
-  options: {
-    applyTarget?: BuffApplyTarget
-    ctx?: SkillCalcContext | null
-    element?: string
-    enabledIds?: Set<string> | null
-    disabledIds?: Set<string> | null
-  } = {},
-): BuffEffect[] {
-  return effects.filter((effect) => {
-    if (options.applyTarget && effect.applyTarget !== options.applyTarget) return false
-    if (options.enabledIds && !options.enabledIds.has(effect.id)) {
-      if (effect.enabledDefault === false) return false
-      if (options.disabledIds?.has(effect.id)) return false
-      if (options.enabledIds.size > 0 && !options.enabledIds.has(effect.id)) {
-        // enabledIds 非空表示显式勾选集合
-        return false
-      }
-    }
-    if (options.disabledIds?.has(effect.id)) return false
-    if (!effectMatchesContext(effect, options.ctx)) return false
-    if (!effectMatchesElement(effect, options.element ?? options.ctx?.element)) return false
-    return true
-  })
-}
-
 export function isEffectEnabled(
   effect: BuffEffect,
   selection: { enabledIds?: Record<string, boolean> } | null | undefined,
 ): boolean {
+  // 额外增益没有勾选状态：**加入即已勾选**（2026-09-24 阶段 3 起并入统一收集）
+  if (effect.extraGain) return true
   if (!selection?.enabledIds || !(effect.id in selection.enabledIds)) {
     // 有队内职业人数条件：未同步前默认不启用，避免条件未满足却全开
     if (effect.teamProfession?.trim()) return false
@@ -781,6 +759,8 @@ export function resolveEffectsToMods(
       external?: Partial<Record<CharacterAttrKey, number>>
       final?: Partial<Record<CharacterAttrKey, number>>
     }
+    /** 技能等级转模来源：效果所属角色的五大类技能等级 */
+    skillTalentLevels?: Partial<SkillTalentLevels> | null
     /** 跳过转模效果（用于先叠非转模再算转模） */
     skipConvert?: boolean
     selection?: { enabledIds?: Record<string, boolean> } | null
@@ -818,7 +798,7 @@ export function resolveEffectsToMods(
 
     const stacks =
       options.stacksByEffectId?.[effect.id] ?? effect.defaultStacks ?? 1
-    let amount =
+    const amount =
       effect.kind === 'convert'
         ? resolveConvertValue(
             effect,
@@ -827,6 +807,7 @@ export function resolveEffectsToMods(
               ? options.convertInputs[effect.id]
               : null,
             options.panelSourceValues,
+            options.skillTalentLevels,
           )
         : resolveEffectBaseValue(effect, stacks)
     if (isBuffMultFactorKey(effect.stat)) {
@@ -840,11 +821,30 @@ export function resolveEffectsToMods(
   return total
 }
 
-function normalizeScope(value: unknown): BuffScope {
-  if (typeof value === 'string' && BUFF_SCOPE_SET.has(value)) {
-    return value as BuffScope
+/**
+ * 把一条行级例外展开成"禁用的效果 id"集合（**只展开，不判定**）。
+ *
+ * - 单条禁用：直接命中
+ * - 块禁用：按调用方给的 blockKey 命中（与收集侧一致：`${sourceKey}::${blockName ?? ''}`）
+ * - 传 null / 空结果 → 返回 null（调用方据此跳过判定，零开销）
+ */
+export function expandBuffOverrideToEffectIds(
+  override:
+    | { disabledBlockIds?: string[] | null; disabledEffectIds?: string[] | null }
+    | null
+    | undefined,
+  items: Array<{ effect: { id: string }; blockKey?: string | null }>,
+): Set<string> | null {
+  if (!override) return null
+  const blockIds = new Set(override.disabledBlockIds ?? [])
+  const effectIds = new Set(override.disabledEffectIds ?? [])
+  if (!blockIds.size && !effectIds.size) return null
+  const out = new Set<string>()
+  for (const item of items) {
+    if (effectIds.has(item.effect.id)) out.add(item.effect.id)
+    else if (item.blockKey && blockIds.has(item.blockKey)) out.add(item.effect.id)
   }
-  return 'general'
+  return out.size ? out : null
 }
 
 function normalizeApplyTarget(value: unknown): BuffApplyTarget {
@@ -881,7 +881,7 @@ function normalizeConvert(value: unknown): BuffEffect['convert'] {
   const rawFrom = entry.from
   if (typeof rawFrom !== 'string') return undefined
 
-  let from: CharacterAttrKey
+  let from: ConvertFromKey
   let panelSource: 'external' | 'final' | 'manual' =
     entry.panelSource === 'final'
       ? 'final'
@@ -899,6 +899,9 @@ function normalizeConvert(value: unknown): BuffEffect['convert'] {
     ) {
       panelSource = legacy.panelSource
     }
+  } else if (isSkillConvertFromKey(rawFrom)) {
+    // 技能等级转模来源：五大类技能等级（与后端 normalizeConvert 白名单对齐）
+    from = rawFrom
   } else if ((CHARACTER_ATTRS as string[]).includes(rawFrom)) {
     from = rawFrom as CharacterAttrKey
   } else {
@@ -934,7 +937,7 @@ export function normalizeBuffEffect(value: unknown): BuffEffect | null {
   const effect = createEmptyBuffEffect({
     id: typeof entry.id === 'string' && entry.id ? entry.id : newEffectId(),
     origin: typeof entry.origin === 'string' ? entry.origin : '',
-    scope: normalizeScope(entry.scope),
+    scope: normalizeBuffScopes(entry.scope),
     applyTarget: normalizeApplyTarget(entry.applyTarget),
     applySituation: normalizeApplySituation(entry.applySituation),
     applyProfession:
@@ -983,15 +986,37 @@ export function normalizeBuffEffect(value: unknown): BuffEffect | null {
     enabledDefault: entry.enabledDefault === false ? false : true,
     note: typeof entry.note === 'string' ? entry.note : '',
   })
+  if (isBuffMultFactorKey(effect.stat)) {
+    effect.value = normalizeBuffMultFactorDelta(effect.value)
+    effect.valuePerStack = normalizeBuffMultFactorDelta(effect.valuePerStack)
+  }
   if (effect.kind === 'convert' && !effect.convert) {
     effect.kind = 'fixed'
   }
-  if (effect.scope === 'skill') {
+  // 叠层结算只用 valuePerStack×层数；转模只用 convert.*。value 为历史冗余，统一清零以免脏数据回写。
+  if (effect.kind === 'stacked' || effect.stackable || effect.kind === 'convert') {
+    effect.value = 0
+  }
+  if (hasBuffScope(effect.scope, 'skill')) {
     const targets = getEffectSkillTargets(effect)
     if (!targets.length) {
       setEffectSkillTargets(effect, [{ category: 'basic', subcategoryId: null }])
     } else {
       setEffectSkillTargets(effect, targets)
+    }
+  }
+  // 倍率修正增量为 0 的脏条目不保留。
+  // 转模（convert）的数值由来源属性在运行时折算，value 字段本就为 0，
+  // 不能按脏条目丢弃，否则会连带删掉蕾米埃尔「精通 → 耀变倍率修正」这类核心被动。
+  const factorValue = Number(effect.value ?? 0)
+  const factorPerStack = Number(effect.valuePerStack ?? 0)
+  if (
+    effect.kind !== 'convert' &&
+    isBuffMultFactorKey(effect.stat) &&
+    Math.abs(factorValue) < 1e-12
+  ) {
+    if (effect.kind !== 'stacked' || Math.abs(factorPerStack) < 1e-12) {
+      return null
     }
   }
   return effect
@@ -1028,9 +1053,9 @@ const INHERENT_ANOMALY_SKILL_STATS = new Set<BuffStatKey>([
 
 function resolveAppliesToAnomaly(entry: Record<string, unknown>): boolean | undefined {
   if (entry.appliesToAnomaly != null) return Boolean(entry.appliesToAnomaly)
-  const scope = normalizeScope(entry.scope)
+  const scopes = normalizeBuffScopes(entry.scope)
   const stat = normalizeStat(entry.stat)
-  if (scope === 'skill' && INHERENT_ANOMALY_SKILL_STATS.has(stat)) return true
+  if (scopes.includes('skill') && INHERENT_ANOMALY_SKILL_STATS.has(stat)) return true
   return undefined
 }
 
@@ -1119,37 +1144,6 @@ export function packFromBlocks(blocks: BuffEffectBlock[]): AgentMindscapeRankBuf
   }
 }
 
-export function normalizeSelfTeamBuffsWithEffects(value: unknown): AgentMindscapeRankBuffs {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const entry = value as Record<string, unknown>
-    if (Array.isArray(entry.effectBlocks) && entry.effectBlocks.length > 0) {
-      return packFromBlocks(normalizeBuffEffectBlocks(entry.effectBlocks))
-    }
-    if (Array.isArray(entry.effects) && entry.effects.length > 0) {
-      return packFromEffects(normalizeBuffEffects(entry.effects))
-    }
-    if (entry.selfMods || entry.teamMods) {
-      const effects = [
-        ...flatModsToEffects(normalizeLooseMods(entry.selfMods), 'self'),
-        ...flatModsToEffects(normalizeLooseMods(entry.teamMods), 'team'),
-      ]
-      return packFromEffects(effects)
-    }
-  }
-  return packFromEffects([])
-}
-
-function normalizeLooseMods(value: unknown): BuffStatModifiers {
-  const empty = emptyMods()
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return empty
-  const entry = value as Record<string, unknown>
-  const result = { ...empty }
-  for (const key of BUFF_STAT_KEYS) {
-    result[key] = readNumber(entry[key])
-  }
-  return result
-}
-
 /** 收集效果时允许只带 blocks/effects 的轻量 pack（如邦布精炼临时对象） */
 export type BuffEffectPackLike = {
   effectBlocks?: Array<{
@@ -1204,10 +1198,6 @@ export function collectBlockEntriesFromPack(
   return [{ blockId: 'legacy', blockName: '增益', blockNote: '', effects }]
 }
 
-export function mergeEffectLists(...lists: BuffEffect[][]): BuffEffect[] {
-  return lists.flat()
-}
-
 export const SKILL_CATEGORY_LABELS: Record<BuffSkillTargetId, string> = {
   basic: '普通攻击',
   dodge: '闪避',
@@ -1232,7 +1222,7 @@ function convertSourceAttrLabel(convert: BuffEffectConvert): string {
         ? '自行'
         : '局外'
   const from =
-    CHARACTER_ATTR_OPTIONS.find((item) => item.id === convert.from)?.label ?? convert.from
+    CONVERT_FROM_OPTIONS.find((item) => item.id === convert.from)?.label ?? convert.from
   return `${source}·${from}`
 }
 
@@ -1265,7 +1255,7 @@ export function formatSkillTargetsPrefix(
   effect: BuffEffect,
   skillSubcategories?: SkillSubcategory[] | null,
 ): string {
-  if (effect.scope !== 'skill') return ''
+  if (!hasBuffScope(effect.scope, 'skill')) return ''
   return getEffectSkillTargets(effect)
     .map((target) => formatSkillTargetBracket(target, skillSubcategories))
     .join('')
@@ -1278,21 +1268,25 @@ export function effectSummaryLabel(
 ): string {
   const target = effect.applyTarget === 'team' ? '全队' : '自身'
   const skillPrefix = formatSkillTargetsPrefix(effect, skillSubcategories)
-  const scope =
-    effect.scope === 'skill'
-      ? skillPrefix
-        ? `招式·${skillPrefix}`
-        : '招式'
-      : (BUFF_SCOPE_LABELS[effect.scope] ?? '通用')
+  // 作用域是数组：多选时按顺序拼接（如「异常 + 异放」；招式带上锚点括号）
+  const scope = normalizeBuffScopes(effect.scope)
+    .map((id) =>
+      id === 'skill'
+        ? skillPrefix
+          ? `招式·${skillPrefix}`
+          : '招式'
+        : buffScopeLabel([id]),
+    )
+    .join(' + ')
   const situation =
     APPLY_SITUATION_LABELS[effect.applySituation ?? 'global'] ?? '全局'
   const applyProf = formatApplyProfessionLabel(effect)
   const elementLabel = formatElementFilterLabel(effect)
   const gate = formatTeamProfessionGateLabel(effect)
   const statText = statLabelFn?.(effect.stat) ?? effect.stat
-  const kind =
+  const amount =
     effect.kind === 'stacked'
-      ? `叠层×${effect.valuePerStack ?? 0}`
+      ? `${effect.valuePerStack ?? 0}×叠层`
       : effect.kind === 'convert'
         ? convertSummaryLabel(effect.convert)
         : `${effect.value ?? 0}`
@@ -1301,17 +1295,32 @@ export function effectSummaryLabel(
   // 属性限制：全局之后、效果之前
   if (elementLabel) parts.push(elementLabel)
   if (gate) parts.push(gate)
-  parts.push(`${statText} ${kind}`)
+  // 数值在前、增益名在后：`60 爆伤%` / `5×叠层 爆伤%`
+  parts.push(`${amount} ${statText}`)
   return parts.join(' · ')
 }
 
-/** 局内 Buff 卡片效果行：`[强攻][斩妄开天] [电] 增伤 +40` */
+/** 作用情况标签：全局 / 失衡期 / 非失衡期（`全局` = 不限定时期） */
+export function formatApplySituationLabel(
+  effect: Pick<BuffEffect, 'applySituation'>,
+): string {
+  return APPLY_SITUATION_LABELS[effect.applySituation ?? 'global'] ?? '全局'
+}
+
+/**
+ * Buff 卡片效果行：`[强攻][斩妄开天] [电] +40 增伤`。
+ *
+ * `applySituation` 打开后标出作用情况（`[强攻][失衡期] [电] +40 增伤`）——
+ * 局内 Buff 选择器与本行增益例外弹窗共用这一份实现，两处文案不会各写一遍。
+ */
 export function formatBuffEffectResultText(
   effect: BuffEffect,
   amountText: string,
   options?: {
     statLabelFn?: (stat: BuffStatKey) => string
     skillSubcategories?: SkillSubcategory[] | null
+    /** 非全局作用情况时加 `[失衡期]` / `[非失衡期]` 前缀 */
+    applySituation?: boolean
   },
 ): string {
   const skillPrefix = formatSkillTargetsPrefix(effect, options?.skillSubcategories)
@@ -1322,7 +1331,16 @@ export function formatBuffEffectResultText(
   const head = [applyProf, skillPrefix].filter(Boolean).join('')
   const mid = gate ? `${gate} ` : ''
   const el = elementLabel ? `${elementLabel} ` : ''
-  return `${head}${head ? ' ' : ''}${mid}${el}${label} ${amountText}`
+  // 数值顺序（2026-09-23 用户口径）：`增伤% +20.16` —— 属性名在前、数值在后
+  const line = `${head}${head ? ' ' : ''}${mid}${el}${label} ${amountText}`
+  if (!options?.applySituation) return line
+  const situation = formatApplySituationLabel(effect)
+  if (situation === '全局') return line
+  // [强攻] 放最前，作用情况紧随其后
+  if (applyProf && line.startsWith(applyProf)) {
+    return `${applyProf}[${situation}] ${line.slice(applyProf.length).trimStart()}`
+  }
+  return `[${situation}] ${line}`
 }
 
 export { BUFF_STAT_KEYS }

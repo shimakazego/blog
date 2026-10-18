@@ -21,6 +21,7 @@ import {
   scopeLabel,
   type ExtraBuffApplySlot,
 } from '@/utils/extraBuffCalc'
+import { hasBuffScope, normalizeBuffScopes } from '@/utils/buffScope'
 import { teamSlotDisplayLabel } from '@/utils/teamSlotLabel'
 import type { AgentBuffDoc } from '@/types/calculator'
 
@@ -31,8 +32,8 @@ export interface ExtraBuffGain {
   value: number
   /** 作用情况，默认全局 */
   applySituation?: BuffApplySituation
-  /** 作用域，默认通用 */
-  scope?: BuffScope
+  /** 作用域（**数组**口径，多选；读时兼容单值字符串），默认通用 */
+  scope?: BuffScope[]
   /** 作用目标；与 applySlot 同步，team=全队，self=指定槽位 */
   applyTarget?: BuffApplyTarget
   /** 作用槽位：'team' = 全队；0/1/2 = 角色1/2/3。旧 self 视为 0 */
@@ -124,7 +125,8 @@ function addGain() {
     stat: draftStat.value,
     value: Number.isFinite(draftValue.value) ? draftValue.value : 0,
     applySituation: draftSituation.value,
-    scope: draftScope.value,
+    // scope 数组口径（编辑器仍是单选，写出去统一数组）
+    scope: normalizeBuffScopes(draftScope.value),
     applySlot: draftApplySlot.value,
     applyTarget: draftApplySlot.value === 'team' ? 'team' : 'self',
   }
@@ -178,7 +180,7 @@ function situationLabel(value?: BuffApplySituation) {
 }
 
 function skillTargetSummary(item: ExtraBuffGain): string {
-  if (item.scope !== 'skill') return ''
+  if (!hasBuffScope(item.scope, 'skill')) return ''
   const cat =
     BUFF_SKILL_TARGET_OPTIONS.find((opt) => opt.id === item.skillCategory)?.label ??
     item.skillCategory ??

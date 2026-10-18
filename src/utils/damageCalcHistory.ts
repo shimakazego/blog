@@ -1,16 +1,45 @@
-import type { AgentBuffDoc } from '@/types/calculator'
 import { loadCustomSkills, parseCustomSkillList, replaceCustomSkills } from '@/utils/skillLibrary'
+import {
+  loadCustomSkillGroups,
+  replaceCustomSkillGroups,
+} from '@/utils/skillGroup'
+import type { SkillGroup } from '@/types/calculator'
 import type {
+  AgentPanelProvenance,
+  AgentPanelSources,
   DamageCalcHistoryEntry,
   DamageCalcHistoryExport,
   DamageCalcHistoryImportResult,
   DamageCalcSchemePanelSnapshot,
   DamageCalcWorkingDraft,
   SchemeFolderMeta,
+  SchemePackImportMode,
   SchemeStore,
 } from '@/types/damageCalcHistory'
+import {
+  applyOwnerGroupMap,
+  buildExportedSkillGroups,
+  collectExportWarnings,
+  countMissingCustomRefs,
+  groupsForCustomStore,
+  mergeCustomGroups,
+  mergeCustomSkills,
+  mergeSchemeStores,
+  parseSkillGroupList,
+} from '@/utils/schemePack'
 import { SCHEME_STORE_VERSION } from '@/types/damageCalcHistory'
-import { resetSchemeExcludedPanelFields } from '@/types/calculatorPanel'
+import type { AffixCounts, AffixDriveDiscMainStats, PanelStats } from '@/types/calculatorPanel'
+import type { ExtraBuffGain } from '@/components/calculator/ExtraBuffGainEditor.vue'
+import {
+  createDefaultAffixDriveDiscMainStats,
+  createEmptyAffixCounts,
+  resetSchemeExcludedPanelFields,
+} from '@/types/calculatorPanel'
+import {
+  createAgentPanelSources,
+  migrateLegacyPanelIntoSource,
+  writeAffixInputsIntoSource,
+} from '@/utils/agentPanelSources'
 import { normalizeExtraGain } from '@/utils/extraBuffCalc'
 
 const STORAGE_KEY = 'zzz-hp-damage-calc-history'
@@ -123,11 +152,6 @@ export function nameConflictType(
 
 export { normFolder, schemePath, parentFolder, baseName, childFolders }
 
-/** 读取原始 store（组件做批量/树操作时需要） */
-export function readRawStore(): SchemeStore {
-  return readStore()
-}
-
 function dirOrder(store: SchemeStore, d: string): number {
   return store.dirs[d]?.order ?? 0
 }
@@ -226,13 +250,16 @@ function createEmptyStore(): SchemeStore {
 }
 
 /**
- * v2 → v3：招式库 / 准备阶段 / 流程 改造。
+ * 旧字段清理（早期版本 → 当前 `SCHEME_STORE_VERSION`；函数名沿用 v3）。
  *
  * 3.1.6.4 的「事件跟随方案」未上线，其 `directEvents` / `anomalyEvents` 与随之而来的
  * 全局事件复制迁移（migrateLegacyGlobalEvents）一并废弃：前者直接清除，后者已删除。
  *
  * 旧的全局自定义事件模式库不在这里处理——它转成**全局自定义招式库**，
  * 与方案无关，见 `migrateLegacyModesToSkills`。
+ *
+ * 局外面板的双来源归位不在这里：它逐条走 `sanitizeSchemeEntry`（读盘与导入都经过），
+ * 因为归位要用到该条方案自己的 `teamSlots` 与 `panelCalcMode`。
  */
 function migrateStoreToV3(store: SchemeStore): void {
   if (store.version >= SCHEME_STORE_VERSION) return
@@ -259,11 +286,11 @@ function sanitizeSchemePanelState(
   panelState: unknown,
 ): DamageCalcSchemePanelSnapshot | null {
   if (!panelState || typeof panelState !== 'object') return null
-  const ps = panelState as Record<string, any>
+  const ps = panelState as Record<string, unknown>
   const { baseDamageSource: _ignored, externalPanel, ...rest } = ps
   const nextExternalPanel = sanitizeSchemePanelLike(externalPanel)
   const extraGains = Array.isArray(ps.extraGains)
-    ? ps.extraGains.map((item: unknown) => normalizeExtraGain(item as any))
+    ? ps.extraGains.map((item: unknown) => normalizeExtraGain(item as ExtraBuffGain))
     : ps.extraGains
 
   return {
@@ -285,9 +312,90 @@ function sanitizeSchemeAnomalySlotPanels(
   const next: NonNullable<DamageCalcHistoryEntry['anomalySlotPanels']> = {}
   for (const [agentId, panel] of Object.entries(panels)) {
     const sanitized = sanitizeSchemePanelLike(panel)
-    if (sanitized) next[agentId] = sanitized as any
+    if (sanitized) next[agentId] = sanitized as unknown as PanelStats
   }
   return next
+}
+
+/** 单份来源记录的白名单清洗；两份面板都空则整条丢弃 */
+function sanitizeAgentPanelSources(value: unknown): AgentPanelSources | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Partial<AgentPanelSources> & Record<string, unknown>
+  const importedPanel = sanitizeSchemePanelLike(raw.importedPanel) as PanelStats | null
+  const affixDerivedPanel = sanitizeSchemePanelLike(raw.affixDerivedPanel) as PanelStats | null
+  if (!importedPanel && !affixDerivedPanel) return null
+  const next: AgentPanelSources = {
+    active: raw.active === 'affixDerived' ? 'affixDerived' : 'imported',
+  }
+  if (importedPanel) next.importedPanel = importedPanel
+  if (affixDerivedPanel) next.affixDerivedPanel = affixDerivedPanel
+  if (raw.affixCounts && typeof raw.affixCounts === 'object') {
+    next.affixCounts = { ...createEmptyAffixCounts(), ...(raw.affixCounts as AffixCounts) }
+  }
+  if (raw.affixDriveDiscMainStats && typeof raw.affixDriveDiscMainStats === 'object') {
+    next.affixDriveDiscMainStats = {
+      ...createDefaultAffixDriveDiscMainStats(),
+      ...(raw.affixDriveDiscMainStats as AffixDriveDiscMainStats),
+    }
+  }
+  const provenance = raw.provenance as AgentPanelProvenance | undefined
+  if (provenance && typeof provenance === 'object') next.provenance = { ...provenance }
+  return next
+}
+
+function sanitizeSchemeSlotPanels(
+  panels: DamageCalcHistoryEntry['slotPanels'],
+): Record<string, AgentPanelSources> | undefined {
+  if (!panels || typeof panels !== 'object') return undefined
+  const next: Record<string, AgentPanelSources> = {}
+  for (const [agentId, sources] of Object.entries(panels)) {
+    const sanitized = sanitizeAgentPanelSources(sources)
+    if (sanitized) next[agentId] = sanitized
+  }
+  return next
+}
+
+/**
+ * 老结构 → 双面板（`dev-docs/affix-calc-manual.md` §1.1、§1.7）。
+ *
+ * 老方案只有一份面板，归位规则**只读** `panelCalcMode`：
+ * `affix` → 词条导入那份；其他 → 面板导入那份。不扫描、不校验、不标注「旧数据」。
+ * 槽位上的词条数与 4/5/6 主属性一并搬进该来源记录，随后清掉老字段。
+ */
+function migrateEntryToDualPanel(entry: DamageCalcHistoryEntry): void {
+  const sources = sanitizeSchemeSlotPanels(entry.slotPanels) ?? {}
+  const legacyPanels = sanitizeSchemeAnomalySlotPanels(entry.anomalySlotPanels)
+  if (legacyPanels) {
+    for (const [agentId, panel] of Object.entries(legacyPanels)) {
+      if (sources[agentId]) continue
+      sources[agentId] = migrateLegacyPanelIntoSource(
+        undefined,
+        panel as PanelStats,
+        entry.panelCalcMode,
+      )
+    }
+  }
+  for (const slot of entry.teamSlots ?? []) {
+    const agentId = slot?.agentId
+    if (!agentId) continue
+    const legacyCounts = slot.affixCounts
+    const legacyMains = slot.affixDriveDiscMainStats
+    if (!legacyCounts && !legacyMains) continue
+    const current = sources[agentId] ?? createAgentPanelSources()
+    sources[agentId] = writeAffixInputsIntoSource(current, {
+      affixCounts: legacyCounts
+        ? { ...createEmptyAffixCounts(), ...legacyCounts }
+        : undefined,
+      affixDriveDiscMainStats: legacyMains
+        ? { ...createDefaultAffixDriveDiscMainStats(), ...legacyMains }
+        : undefined,
+    })
+    delete slot.affixCounts
+    delete slot.affixDriveDiscMainStats
+  }
+  if (Object.keys(sources).length) entry.slotPanels = sources
+  else delete entry.slotPanels
+  delete entry.anomalySlotPanels
 }
 
 /**
@@ -300,11 +408,13 @@ function sanitizeSchemeAnomalySlotPanels(
  * - 所有方案面板容器里的 mutationCoeff / mutationCoeffFactor（重置为 0 / 100，不 delete）
  */
 function sanitizeSchemeEntry(entry: DamageCalcHistoryEntry): DamageCalcHistoryEntry {
-  return {
+  const next: DamageCalcHistoryEntry = {
     ...entry,
     panelState: sanitizeSchemePanelState(entry.panelState) ?? entry.panelState,
-    anomalySlotPanels: sanitizeSchemeAnomalySlotPanels(entry.anomalySlotPanels),
   }
+  // 老结构的归位与清洗都在这里做：方案库读盘、导出包导入都经过本函数
+  migrateEntryToDualPanel(next)
+  return next
 }
 
 function isValidEntry(item: unknown): item is DamageCalcHistoryEntry {
@@ -408,11 +518,13 @@ function readStore(): SchemeStore {
       const sanitized = sanitizeSchemePanelState(entry.panelState)
       if (sanitized) entry.panelState = sanitized
     }
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
-    } catch {
-      /* ignore */
-    }
+    // 这里**不再无条件回写**（原实现是每次读盘都 setItem 一次）：
+    // - 上面的 key 归一化 / ensureOrders / v3 迁移 / 快照清洗都是**幂等**的，读时在内存里做即可，
+    //   消费方拿到的结果完全一样（真正的写入操作 writeStore 会把这套结果落盘）；
+    // - 每次读都全量序列化 + 写一遍：既费 CPU 与同步 I/O，又会让「A 标签页的陈旧视图」
+    //   覆盖 B 标签页刚保存的方案 —— 静默丢数据；
+    // - 顺带：那次写入失败原本也不进 schemeStoreWriteFailed() 标记（漏报）。
+    // 只有真正改变存储形状的一次性迁移（上面的旧数组 → 新结构）才写盘。
     return store
   } catch {
     return createEmptyStore()
@@ -422,10 +534,49 @@ function readStore(): SchemeStore {
 function writeStore(store: SchemeStore): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
+    lastSchemeWriteFailed = false
   } catch {
-    /* ignore quota errors */
+    // 配额满 / 隐私模式：**不静默** —— 页面读 schemeStoreWriteFailed() 并明确提示，不报「已保存」
+    lastSchemeWriteFailed = true
   }
 }
+
+/** 最近一次方案库写入是否失败（配额满 / 隐私模式）。调用方必须提示用户 */
+let lastSchemeWriteFailed = false
+
+/** 读一次就复位：避免「上一次失败、这一次早退」被当成失败报给用户 */
+export function takeSchemeStoreWriteFailed(): boolean {
+  const failed = lastSchemeWriteFailed
+  lastSchemeWriteFailed = false
+  return failed
+}
+
+/** 供内部使用：显式复位标记（每次公开写入操作开始前调） */
+function resetSchemeWriteFailed(): void {
+  lastSchemeWriteFailed = false
+}
+
+/** 本地存储总用量（**字节**；localStorage 按 UTF-16 计，每码元 2 字节）。给「接近上限」预警用 */
+export function localStorageUsageBytes(): number {
+  // 面板里搜索每敲一个字都会重算（依赖 revision），全量扫描太浪费 → 2 秒缓存
+  const now = Date.now()
+  if (usageCache && now - usageCache.at < 2000) return usageCache.bytes
+  let codeUnits = 0
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i)
+      if (key == null) continue
+      codeUnits += key.length + (localStorage.getItem(key)?.length ?? 0)
+    }
+  } catch {
+    codeUnits = 0
+  }
+  const bytes = codeUnits * 2
+  usageCache = { at: now, bytes }
+  return bytes
+}
+
+let usageCache: { at: number; bytes: number } | null = null
 
 // ===================== 方案条目 =====================
 
@@ -449,6 +600,8 @@ export function listAllDamageCalcHistory(): DamageCalcHistoryEntry[] {
 
 /** 把 entry 写入 store；entry.id / folder / name 会被规范化为路径 */
 export function saveDamageCalcHistory(entry: DamageCalcHistoryEntry): DamageCalcHistoryEntry[] {
+  // 每次公开写入操作开始前复位失败标记：否则「上一次失败 + 这次早退」会被误报成写盘失败
+  resetSchemeWriteFailed()
   const store = readStore()
   const folder = normFolder(entry.folder || '')
   const name = (entry.name || '').trim()
@@ -463,13 +616,6 @@ export function saveDamageCalcHistory(entry: DamageCalcHistoryEntry): DamageCalc
   }
   store.schemes[key] = sanitizeSchemeEntry(normalized)
   assignOrderFront(store, 'scheme', folder, key)
-  writeStore(store)
-  return listAllDamageCalcHistory()
-}
-
-export function removeDamageCalcHistory(path: string): DamageCalcHistoryEntry[] {
-  const store = readStore()
-  delete store.schemes[path]
   writeStore(store)
   return listAllDamageCalcHistory()
 }
@@ -829,7 +975,14 @@ export function findDamageCalcHistory(id: string): DamageCalcHistoryEntry | null
   return listAllDamageCalcHistory().find((entry) => entry.id === id) ?? null
 }
 
-export function loadWorkingDraft(): DamageCalcWorkingDraft | null {
+/** 本页已见过 / 已写入的最新草稿时间戳（多标签页判断用） */
+let lastSeenDraftSavedAt = 0
+
+/** 草稿写入结果。调用方必须按结果提示用户 —— **不能静默丢数据** */
+export type SaveWorkingDraftResult = 'ok' | 'failed' | 'stale'
+
+/** 只读不标记：给写入前的比较用（标记了就看不出「别的标签页写过」） */
+function readStoredDraft(): DamageCalcWorkingDraft | null {
   try {
     const raw = localStorage.getItem(DRAFT_KEY)
     if (!raw) return null
@@ -841,11 +994,32 @@ export function loadWorkingDraft(): DamageCalcWorkingDraft | null {
   }
 }
 
-export function saveWorkingDraft(draft: DamageCalcWorkingDraft): void {
+export function loadWorkingDraft(): DamageCalcWorkingDraft | null {
+  const parsed = readStoredDraft()
+  if (parsed) lastSeenDraftSavedAt = Math.max(lastSeenDraftSavedAt, parsed.savedAt || 0)
+  return parsed
+}
+
+/**
+ * 写工作草稿。**绝不静默丢数据**：
+ * - 取不到面板快照的那次落盘（子组件已拆）不能抹掉已存快照 → 没带 `panelState` 就沿用旧的那份；
+ * - 配额满 / 隐私模式写入失败 → 返回 `'failed'`（调用方必须提示，不能假装已保存）；
+ * - 发现别的标签页写过更新的草稿 → **照样写**（拒绝写会让本页从此永久停止保存 = 更大的坑，
+ *   独立复核实测过这一支），但返回 `'stale'` 让调用方提示「对方的改动可能被覆盖」。
+ *
+ * 注：判断只用草稿自带的 `savedAt`（不再另存 meta key —— 那会多出一个 key 和一类「meta 在、草稿不在」的坏状态）。
+ */
+export function saveWorkingDraft(draft: DamageCalcWorkingDraft): SaveWorkingDraftResult {
   try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
+    const stored = readStoredDraft()
+    const otherTabWroteNewer = !!stored && stored.savedAt > lastSeenDraftSavedAt
+    const payload = draft.panelState ? draft : { ...draft, panelState: stored?.panelState ?? null }
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(payload))
+    // 关键：无论是否 stale 都要把「已见时间戳」推进，否则下一次还会判 stale → 永久阻断
+    lastSeenDraftSavedAt = Math.max(lastSeenDraftSavedAt, payload.savedAt || 0)
+    return otherTabWroteNewer ? 'stale' : 'ok'
   } catch {
-    /* quota / private mode */
+    return 'failed'
   }
 }
 
@@ -855,21 +1029,6 @@ export function clearWorkingDraft(): void {
   } catch {
     /* ignore */
   }
-}
-
-// ===================== 格式化辅助 =====================
-
-export function formatDamageCalcAgentSelection(
-  teamSlots: DamageCalcHistoryEntry['teamSlots'],
-  agents: AgentBuffDoc[],
-): string {
-  const labels = teamSlots.map((slot, index) => {
-    if (!slot.agentId) return `槽位${index + 1}未选`
-    const agent = agents.find((item) => item.id === slot.agentId)
-    const name = agent?.name ?? '未知角色'
-    return name
-  })
-  return labels.join(' / ')
 }
 
 export function schemeStats(entry: DamageCalcHistoryEntry): {
@@ -902,12 +1061,22 @@ export function formatDamageCalcHistoryTime(savedAt: number): string {
 
 // ===================== 导出 / 导入（对齐 dev 的 zzz_schemes 包） =====================
 
-function emptyImportResult(errors: string[]): DamageCalcHistoryImportResult {
+function emptyImportResult(
+  errors: string[],
+  mode: SchemePackImportMode = 'replace',
+): DamageCalcHistoryImportResult {
   return {
     added: 0,
     skipped: 0,
     errors,
     customSkillCount: 0,
+    customGroupCount: 0,
+    renamed: 0,
+    remappedSkills: 0,
+    remappedGroups: 0,
+    missingSkillCount: 0,
+    missingGroupCount: 0,
+    mode,
     legacyPack: false,
     loadedId: '',
   }
@@ -954,15 +1123,42 @@ function resolveImportedLoadedId(store: SchemeStore, requested?: string | null):
   return Object.values(store.schemes)[0]?.id ?? ''
 }
 
+function attachMissingCounts(
+  result: DamageCalcHistoryImportResult,
+  schemes: Record<string, DamageCalcHistoryEntry>,
+  presetGroupIds: Set<string>,
+): DamageCalcHistoryImportResult {
+  const missing = countMissingCustomRefs({
+    schemes,
+    customSkills: loadCustomSkills(),
+    groups: loadCustomSkillGroups(),
+    presetGroupIds,
+  })
+  result.missingSkillCount = missing.missingSkillCount
+  result.missingGroupCount = missing.missingGroupCount
+  return result
+}
+
 function commitReplacedStore(
   store: SchemeStore,
   customRaw: unknown,
   legacyPack: boolean,
-  requestedId?: string | null,
+  requestedId: string | null | undefined,
+  groupRaw: unknown,
+  hasGroups: boolean,
+  presetGroupIds: Set<string>,
 ): DamageCalcHistoryImportResult {
   const skills = parseCustomSkillList(customRaw)
   if (skills == null) {
     return emptyImportResult(['自建招式数据格式错误，未改动本机数据'])
+  }
+  let groups: SkillGroup[] = loadCustomSkillGroups()
+  if (hasGroups) {
+    const parsedGroups = parseSkillGroupList(groupRaw)
+    if (parsedGroups == null) {
+      return emptyImportResult(['技能组数据格式错误，未改动本机数据'])
+    }
+    groups = replaceCustomSkillGroups(groupsForCustomStore(parsedGroups, presetGroupIds))
   }
   ensureOrders(store)
   store.version = SCHEME_STORE_VERSION
@@ -971,18 +1167,41 @@ function commitReplacedStore(
   clearWorkingDraft()
   const loadedId = resolveImportedLoadedId(store, requestedId)
   setLoadedSchemeId(loadedId)
-  return {
-    added: Object.keys(store.schemes).length,
-    skipped: 0,
-    errors: [],
-    customSkillCount: skills.length,
-    legacyPack,
-    loadedId,
-  }
+  return attachMissingCounts(
+    {
+      added: Object.keys(store.schemes).length,
+      skipped: 0,
+      errors: [],
+      customSkillCount: skills.length,
+      customGroupCount: groups.length,
+      renamed: 0,
+      remappedSkills: 0,
+      remappedGroups: 0,
+      missingSkillCount: 0,
+      missingGroupCount: 0,
+      mode: 'replace',
+      legacyPack,
+      loadedId,
+    },
+    store.schemes,
+    presetGroupIds,
+  )
 }
 
-export function exportDamageCalcHistory(): string {
+export function exportDamageCalcHistory(knownGroups: SkillGroup[] = []): string {
   const store = readStore()
+  const customSkills = loadCustomSkills()
+  const customGroups = loadCustomSkillGroups()
+  const skillGroups = buildExportedSkillGroups({
+    customGroups,
+    knownGroups,
+    schemes: store.schemes,
+  })
+  const warnings = collectExportWarnings({
+    schemes: store.schemes,
+    customSkills,
+    knownGroups: [...customGroups, ...knownGroups],
+  })
   const payload: DamageCalcHistoryExport = {
     type: 'zzz-hp-schemes',
     version: SCHEME_STORE_VERSION,
@@ -990,26 +1209,107 @@ export function exportDamageCalcHistory(): string {
     dirs: store.dirs,
     schemes: store.schemes,
     currentId: getLoadedSchemeId(),
-    customSkills: loadCustomSkills(),
+    customSkills,
+    skillGroups,
+    warnings,
   }
   return JSON.stringify(payload, null, 2)
 }
 
-/** 整包覆盖：清空本机方案库、自建招式、工作草稿后再写入。合并导入尚未做。 */
-export function importDamageCalcHistory(json: string): DamageCalcHistoryImportResult {
+export interface ImportDamageCalcHistoryOptions {
+  mode?: SchemePackImportMode
+  presetGroupIds?: Iterable<string>
+}
+
+function mergeIncomingPack(
+  data: Partial<DamageCalcHistoryExport>,
+  incomingSchemes: Record<string, DamageCalcHistoryEntry>,
+  incomingDirs: Record<string, SchemeFolderMeta>,
+  presetGroupIds: Set<string>,
+): DamageCalcHistoryImportResult {
+  const incomingSkills = parseCustomSkillList(data.customSkills)
+  if (incomingSkills == null) {
+    return emptyImportResult(['自建招式数据格式错误，未改动本机数据'], 'merge')
+  }
+  const incomingGroups = parseSkillGroupList(data.skillGroups)
+  if (incomingGroups == null) {
+    return emptyImportResult(['技能组数据格式错误，未改动本机数据'], 'merge')
+  }
+  const skillMerge = mergeCustomSkills(loadCustomSkills(), incomingSkills)
+  const groupMerge = mergeCustomGroups({
+    local: loadCustomSkillGroups(),
+    incoming: incomingGroups,
+    skillIdMap: skillMerge.idMap,
+    presetIds: presetGroupIds,
+  })
+  const skills = applyOwnerGroupMap(skillMerge.skills, groupMerge.idMap, skillMerge.writtenIds)
+  const cleanedSchemes: Record<string, DamageCalcHistoryEntry> = {}
+  for (const [key, entry] of Object.entries(incomingSchemes)) {
+    if (!entry || typeof entry !== 'object') {
+      cleanedSchemes[key] = entry
+      continue
+    }
+    cleanedSchemes[key] = sanitizeSchemeEntry(entry)
+  }
+  const merged = mergeSchemeStores({
+    local: readStore(),
+    incomingDirs,
+    incomingSchemes: cleanedSchemes,
+    skillIdMap: skillMerge.idMap,
+    groupIdMap: groupMerge.idMap,
+  })
+  ensureOrders(merged.store)
+  merged.store.version = SCHEME_STORE_VERSION
+  writeStore(merged.store)
+  replaceCustomSkills(skills)
+  replaceCustomSkillGroups(groupMerge.groups)
+  const loadedId = getLoadedSchemeId()
+  return attachMissingCounts(
+    {
+      added: merged.added,
+      skipped: merged.skippedIdentical + merged.skippedInvalid,
+      errors: [],
+      customSkillCount: skillMerge.added,
+      customGroupCount: groupMerge.added,
+      renamed: merged.renamed,
+      remappedSkills: skillMerge.remapped,
+      remappedGroups: groupMerge.remapped,
+      missingSkillCount: 0,
+      missingGroupCount: 0,
+      mode: 'merge',
+      legacyPack: false,
+      loadedId,
+    },
+    merged.store.schemes,
+    presetGroupIds,
+  )
+}
+
+/** 覆盖导入清空本机方案库、自建招式、自建组（新包）和工作草稿。合并导入不删本机。 */
+export function importDamageCalcHistory(
+  json: string,
+  options: ImportDamageCalcHistoryOptions = {},
+): DamageCalcHistoryImportResult {
+  const mode: SchemePackImportMode = options.mode === 'merge' ? 'merge' : 'replace'
+  const presetGroupIds = new Set(
+    [...(options.presetGroupIds ?? [])].map((id) => String(id).trim()).filter(Boolean),
+  )
   let parsed: unknown
   try {
     parsed = JSON.parse(json)
   } catch {
-    return emptyImportResult(['JSON 解析失败，请检查文件格式'])
+    return emptyImportResult(['JSON 解析失败，请检查文件格式'], mode)
   }
 
   if (Array.isArray(parsed)) {
     const migrated = migrateFromLegacyArray(parsed)
+    if (mode === 'merge') {
+      return mergeIncomingPack({}, migrated.schemes, migrated.dirs, presetGroupIds)
+    }
     const next = createEmptyStore()
     const ingested = ingestSchemes(next, migrated.schemes)
     for (const d of Object.keys(migrated.dirs)) next.dirs[d] = migrated.dirs[d]!
-    const result = commitReplacedStore(next, [], true, null)
+    const result = commitReplacedStore(next, [], true, null, undefined, false, presetGroupIds)
     if (!result.errors.length) {
       result.added = ingested.added
       result.skipped = ingested.skipped
@@ -1019,25 +1319,37 @@ export function importDamageCalcHistory(json: string): DamageCalcHistoryImportRe
 
   const data = parsed as Partial<DamageCalcHistoryExport> & { entries?: unknown[] }
   if (data.type !== 'zzz-hp-schemes' && !Array.isArray(data.entries) && !data.schemes) {
-    return emptyImportResult(['文件类型错误：不是 zzz-hp-schemes 方案库文件'])
+    return emptyImportResult(['文件类型错误：不是 zzz-hp-schemes 方案库文件'], mode)
   }
 
-  const next = createEmptyStore()
-  const incomingDirs = data.dirs || {}
-  for (const d of Object.keys(incomingDirs)) next.dirs[d] = incomingDirs[d]!
-
+  const incomingDirs = { ...(data.dirs || {}) }
   let incomingSchemes: Record<string, DamageCalcHistoryEntry> = data.schemes || {}
   if (Array.isArray(data.entries)) {
     const migrated = migrateFromLegacyArray(data.entries)
     incomingSchemes = migrated.schemes
     for (const d of Object.keys(migrated.dirs)) {
-      if (!next.dirs[d]) next.dirs[d] = migrated.dirs[d]!
+      if (!incomingDirs[d]) incomingDirs[d] = migrated.dirs[d]!
     }
   }
 
+  if (mode === 'merge') {
+    return mergeIncomingPack(data, incomingSchemes, incomingDirs, presetGroupIds)
+  }
+
+  const next = createEmptyStore()
+  for (const d of Object.keys(incomingDirs)) next.dirs[d] = incomingDirs[d]!
   const ingested = ingestSchemes(next, incomingSchemes)
   const legacyPack = !Object.prototype.hasOwnProperty.call(data, 'customSkills')
-  const result = commitReplacedStore(next, legacyPack ? [] : data.customSkills, legacyPack, data.currentId)
+  const hasGroups = Object.prototype.hasOwnProperty.call(data, 'skillGroups')
+  const result = commitReplacedStore(
+    next,
+    legacyPack ? [] : data.customSkills,
+    legacyPack,
+    data.currentId,
+    data.skillGroups,
+    hasGroups,
+    presetGroupIds,
+  )
   if (!result.errors.length) {
     result.added = ingested.added
     result.skipped = ingested.skipped

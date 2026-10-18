@@ -8,7 +8,7 @@ export interface AnomalyFormulaAgentLabels {
   baseAgent?: string
   /**
    * 增伤/倍率/暴击等 bonus 乘区所属角色展示名
-   * （紊乱/乱流 → 招式持有者；属性异常/异放/耀变 → 异常类触发者）
+   * 全部异常子类（含紊乱/乱流）→ 异常类触发者；异常结算中不出现招式持有者
    */
   bonusAgent?: string
   /** 异化系数区所属角色展示名（如「异化系数 · 蕾米埃尔」） */
@@ -188,10 +188,11 @@ export function buildAlignedAnomalyFormulaGroups(
         value: formatFormulaNumber(p.anomalyReleaseMultZone),
         tipsKey: 'anomalyReleaseMultZone',
       },
+      // 「异常综合暴击区」已删除（用户 2026-10-16：暴击按子类拆开，异放只吃自己的暴击字段）
       {
-        label: '异常综合暴击区',
-        value: `1 / ${formatFormulaNumber(p.anomalyCombinedFullCritZone)}`,
-        tipsKey: 'anomalyCombinedCritZone',
+        label: '异放暴击区',
+        value: formatFormulaNumber(p.anomalyReleaseCritZone),
+        tipsKey: 'anomalyReleaseCritZone',
       },
     ],
     result: formatNumber(p.anomalyReleaseExpected),
@@ -273,11 +274,6 @@ export function buildAlignedAnomalyFormulaGroups(
   if (sub === 'anomalyRelease') return [base, release]
   if (sub === 'radiance') return [base, radianceChain]
   return [base, anomaly]
-}
-
-export function formatFormulaGroupTitle(group: Pick<AlignedAnomalyFormulaGroup, 'title' | 'agentLabel' | 'hint'>) {
-  const prefix = group.agentLabel ? `${group.agentLabel} · ` : ''
-  return { prefix, title: group.title, hint: group.hint }
 }
 
 export function resolveAnomalyBaseWithMutation(

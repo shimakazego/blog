@@ -43,6 +43,8 @@ export interface AdminDeductionMonster {
   level: number
   weakness: string | null
   resistance: string | null
+  /** 高抗性（40%）属性，为 resistance 的子集 */
+  resistance_high?: string | null
   /** 管理端选中候选时写入的本地 Boss 图片路径（/boss_image/...），可能为空 */
   boss_image?: string | null
 }
@@ -98,6 +100,8 @@ export interface AdminPickBoss {
   defense: number
   weakness: string | null
   resistance: string | null
+  /** 高抗性（40%）属性，为 resistance 的子集 */
+  resistance_high?: string | null
   boss_image: string | null
 }
 
@@ -272,6 +276,8 @@ export async function createDeductionBossInfo(payload: {
   level?: number
   weakness?: string | null
   resistance?: string | null
+  /** 高抗性（40%）属性，为 resistance 的子集 */
+  resistance_high?: string | null
   boss_image?: string | null
 }): Promise<{ action: string; id: number }> {
   return request('/api/zzz/admin/deduction/boss-info', {

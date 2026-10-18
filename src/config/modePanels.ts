@@ -12,7 +12,16 @@ const modePanelDefinitions = [
     labelOverrides: { deduction: '节点对比折线图' },
     modes: allModes,
   },
-  { id: 'monster-compare', label: '单独怪物对比', modes: allModes },
+  {
+    id: 'monster-compare',
+    label: '怪物数据库',
+    labelOverrides: {
+      'crisis-assault': '危局怪物数据库',
+      defense: '防卫战怪物数据库',
+      deduction: '临界推演怪物数据库',
+    },
+    modes: allModes,
+  },
   { id: 'buff-overview', label: 'Buff 总览', modes: allModes },
   { id: 'buff-compare', label: 'Buff 对比', modes: allModes },
   {

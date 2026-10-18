@@ -215,6 +215,20 @@ export function buildPierceDmgZoneProcessItems(options: {
   ]
 }
 
+export function buildSharpenDmgZoneProcessItems(options: {
+  active: boolean
+  bonusPercent: number
+  zone: number
+}): string[] {
+  if (!options.active) {
+    return ['非锐化路径（仅锋御职业或招式伤害类型为锐化），锐化伤害提升区固定为 1']
+  }
+  return [
+    `锐化伤害提升 ${fmt(options.bonusPercent, 2)}%`,
+    `锐化伤害提升区 1 + ${fmt(options.bonusPercent, 2)}% = ${fmt(options.zone)}`,
+  ]
+}
+
 export function buildRemielSpecialLevelZoneGroups(level: number, zone?: number): StatSourceGroup[] {
   const safeLevel = Math.min(60, Math.max(1, Math.round(level)))
   const value = zone ?? computeRemielSelfRadianceSpecialLevelZone(safeLevel)

@@ -62,6 +62,7 @@ function wengineDoc(
   partial: Omit<WengineBuffDoc, 'refinementBuffs' | 'profession' | 'baseAtk' | 'advancedStats' | 'note'> & {
     profession?: string
     baseAtk?: number
+    baseDef?: number
     advancedStats?: WengineBuffDoc['advancedStats']
     refinementBuffs?: AgentMindscapeRankBuffs[]
     note?: string
@@ -75,6 +76,7 @@ function wengineDoc(
     avatar_image: partial.avatar_image,
     note: partial.note ?? '',
     baseAtk: partial.baseAtk ?? 0,
+    baseDef: partial.baseDef ?? 0,
     advancedStats: partial.advancedStats ?? createEmptyWengineAdvancedStats(),
     fixedBuffs: partial.fixedBuffs,
     refinementBuffs: partial.refinementBuffs ?? createEmptyWengineRefinementBuffs(),

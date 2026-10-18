@@ -1,5 +1,6 @@
 import type { TeamSlot } from '@/components/calculator/DamageCalcPage.vue'
 import type { ExtraBuffGain } from '@/components/calculator/ExtraBuffGainEditor.vue'
+import type { SkillTalentLevels } from '@/utils/skillTalentLevels'
 import type {
   AgentBuffDoc,
   AnomalyDamageSubKind,
@@ -22,10 +23,18 @@ import {
 } from '@/types/calculatorPanel'
 import {
   AFFIX_VALUE_PER_COUNT,
-  computeExternalPanelFromAffixes,
+  applyAffixCountsOntoExternalPanel,
+  applyAffixCountsToFixedParts,
+  buildAffixExternalFixedParts,
   computeExternalPanelFromTeamSlot,
+  type AffixExternalFixedParts,
   type AffixPanelCalcInput,
 } from '@/utils/affixPanelCalc'
+import {
+  applyPanelDeltas,
+  type AffixDeltaMap,
+  type AffixPanelDeltaField,
+} from '@/utils/affixLibrary'
 import {
   createEmptyAgentBasePanel,
   createEmptyBuffStatModifiers,
@@ -33,6 +42,7 @@ import {
 } from '@/utils/calculatorUi'
 import {
   computeDamageResult,
+  resolveBaseDamageSourceForProfession,
   type DamageCalcResult,
   type DamageEnemyInput,
 } from '@/utils/damageCalc'
@@ -49,30 +59,35 @@ import {
   applyHitPanelMods,
   type ResolvedHit,
 } from '@/utils/resolvedHit'
-import { mergeExtraModsForEvent } from '@/utils/extraBuffCalc'
+import { deepUnwrapReactive } from '@/utils/reactiveUnwrap'
 import {
   computeMutationZone,
   findLuminousAgentInTeam,
-  isRemielSelfRadiancePowerProvider,
   resolveDamageCalcResistanceElements,
 } from '@/utils/remielUtils'
 import {
-  collectRemielSelfRestrictedContributions,
-  computeRemielSelfInCombatPanel,
-  resolveRemielSelfRadianceCalcInput,
-} from '@/utils/remielSelfRadiancePanel'
+  REMIEL_SELF_RADIANCE_VIEW_POLICY,
+  resolvePanelViewPolicyForRadiance,
+} from '@/utils/panelViewPolicy'
 import { mergeSkillSubcategoryMultOverrides } from '@/utils/skillSubcategoryMult'
+import { isEffectEnabled } from '@/utils/buffEffect'
 import {
+  collectAllBuffEffects,
   computeFinalPanel,
+  hasExternalPanelForSlot,
+  parseSourceKeySlotIndex,
   resolveAnomalyReleaseMultFields,
   type BuffSelectionState,
   type MultiSlotBuffSelection,
   type PanelCalcContext,
   resolveBuffSelectionForSlot,
   panelToConvertAttrValues,
-  buildPanelSourceValuesBySlotRecord,
+  buildPanelSourceValuesBySlotMap,
 } from '@/utils/panelBuffCalc'
 import { formatAnomalyFormulaAgentLabel } from '@/utils/anomalyFormulaDisplay'
+
+/** 扫掠 / 流程总伤只要面板数字，不拼「增益来自哪」明细 */
+const PANEL_NUMBERS_ONLY = { includeDetails: false } as const
 
 export type OptimalDamageKind = 'direct' | 'anomaly'
 
@@ -144,7 +159,7 @@ export interface OptimalEventEvalDetail {
   producerExternalPanel?: PanelStats
   producerBreakdown?: OptimalPanelBreakdown
   producerAgentLabel?: string
-  /** 类型增伤/倍率面板（属性异常/异放/耀变=异常类触发者；紊乱/乱流=招式持有者） */
+  /** 类型增伤/倍率面板（全部异常子类含紊乱/乱流=异常类触发者） */
   bonusFinalPanel?: PanelStats
   bonusExternalPanel?: PanelStats
   bonusBreakdown?: OptimalPanelBreakdown
@@ -271,12 +286,29 @@ export interface AnomalyAllocState {
 
 export interface OptimalEvalContext {
   isMb: boolean
+  /** 主 C 为锋御：直伤扫盘用防御副词条，评估走锐化公式 */
+  isFengYu: boolean
   agentBase: AffixPanelCalcInput['agentBase']
   wengineBaseAtk: number
+  wengineBaseDef?: number
   wengineAdvanced: AffixPanelCalcInput['wengineAdvanced']
   driveDiscSelection: AffixPanelCalcInput['driveDiscSelection']
   driveDiscMainStats: AffixDriveDiscMainStats
   driveDiscs: DriveDiscBuffDoc[]
+  /**
+   * 主 C 的基准局外面板，来自「角色配置」（导入录入写入的 `activeSlotPanels`）。
+   *
+   * 有值时候选词条**叠加在它之上**（词条 = 在面板上再加 N 条，面板本身不动）；
+   * 无值时 `computeExternalForEval` 回退到按槽位配置推导 —— 与改造前逐位等价。
+   */
+  mainBaseExternalPanel?: PanelStats | null
+  /**
+   * 词条「每档值」表（由词条库条目的 `perRoll` 算出），省略时按 `AFFIX_VALUE_PER_COUNT`。
+   *
+   * 放进上下文而不是逐函数传参：柱图扫掠 / 详情 / 收益表 / 基准总伤都从 ctx 取面板，
+   * 少传一条路就会出现「同一套词条，两处数字不一样」——即 2026-09-11 修过的那类分叉。
+   */
+  valuePerCount?: AffixValuePerCount
   panelContext: PanelCalcContext
   enemyInput: DamageEnemyInput
   baseDamageSource: BaseDamageSource
@@ -342,6 +374,12 @@ export interface AffixDiffRow {
   addOne: number
   damageDelta: number
   percentDelta: number
+  /**
+   * 相对权重 = 本行收益率 / 本表最大收益率，0~1（分母取「已产出行」的最大百分比差；
+   * 全部 ≤ 0 时为 0，与收益表 `affixRelativeWeights` 同口径）。
+   * 在 `computeDiffAnalysis` 的 addOne 排序之后统一回填。
+   */
+  weight?: number
   /** 已达主词条约束上限，无法再 +1 */
   capped?: boolean
   note?: string
@@ -361,7 +399,8 @@ export interface AffixReplaceRow {
 }
 
 export interface BenefitCurveSeries {
-  key: OptimalAffixKey
+  /** 系列标识；扫掠模式为 OptimalAffixKey，词条分配模式为词条库条目 id */
+  key: string
   label: string
   color: string
   /** index 0 unused; values[n] = cumulative % after adding n rolls */
@@ -375,6 +414,20 @@ export interface BenefitCurveSeries {
 function clampInt(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min
   return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+export function resolveAffixOutPercentCap(caps: AffixRollCaps, isMb: boolean, isFengYu: boolean): number {
+  if (isMb) return caps.hpPercent
+  if (isFengYu) return caps.defPercent
+  return caps.atkPercent
+}
+
+function resolvePanelOnlyDamageCalcBase(ctx: OptimalEvalContext) {
+  return {
+    baseDamageSource: ctx.isMb ? ('pierce' as const) : ctx.isFengYu ? ('def' as const) : ctx.baseDamageSource,
+    isMbMainAgent: ctx.isMb,
+    useSharpenFormula: Boolean(ctx.isFengYu),
+  }
 }
 
 export function flatStatKey(isMb: boolean, isFengYu = false): 'atkFlat' | 'hpFlat' | 'defFlat' {
@@ -433,6 +486,7 @@ export function validateDirectAlloc(
   state: DirectAllocState,
   isMb = false,
   mainStats?: AffixDriveDiscMainStats,
+  isFengYu = false,
 ): string | null {
   const atkFlat = clampInt(state.flatStat, 0, 99)
   const hpFlat = clampInt(state.hpFlat, 0, 99)
@@ -454,7 +508,7 @@ export function validateDirectAlloc(
   if (flatPenTotal > DIRECT_CONSTRAINTS.maxAtkPenTotal) {
     return isMb
       ? `精通+攻击力+生命值+穿透+总词条数不能超过 ${DIRECT_CONSTRAINTS.maxAtkPenTotal}`
-      : `精通+${flatStatLabel(isMb)}+穿透+总词条数不能超过 ${DIRECT_CONSTRAINTS.maxAtkPenTotal}`
+      : `精通+${flatStatLabel(isMb, isFengYu)}+穿透+总词条数不能超过 ${DIRECT_CONSTRAINTS.maxAtkPenTotal}`
   }
   if (mainStats) {
     const caps = getAffixRollCaps(mainStats)
@@ -473,8 +527,8 @@ export function validateDirectAlloc(
         return `局外大生命+爆伤可分配余量 ${remain} 超出主词条约束上限（局外大生命≤${caps.hpPercent}，爆伤≤${caps.critDmg}）`
       }
     } else {
-      const outCap = caps.atkPercent
-      const outName = outPercentLabel(isMb)
+      const outCap = resolveAffixOutPercentCap(caps, isMb, isFengYu)
+      const outName = outPercentLabel(isMb, isFengYu)
       if (remain > outCap + caps.critDmg) {
         return `${outName}+爆伤可分配余量 ${remain} 超出主词条约束上限（${outName}≤${outCap}，爆伤≤${caps.critDmg}）`
       }
@@ -487,6 +541,7 @@ export function validateAnomalyAlloc(
   state: AnomalyAllocState,
   isMb: boolean,
   mainStats?: AffixDriveDiscMainStats,
+  isFengYu = false,
 ): string | null {
   const flat = clampInt(state.flatStat, 0, 99)
   const pen = clampInt(state.pen, 0, 99)
@@ -495,12 +550,12 @@ export function validateAnomalyAlloc(
     return `总词条数不能超过 ${ANOMALY_CONSTRAINTS.maxTotalRolls}`
   }
   if (flat + pen + total > ANOMALY_CONSTRAINTS.maxAtkPenTotal) {
-    return `${flatStatLabel(isMb)}+穿透+总词条数不能超过 ${ANOMALY_CONSTRAINTS.maxAtkPenTotal}`
+    return `${flatStatLabel(isMb, isFengYu)}+穿透+总词条数不能超过 ${ANOMALY_CONSTRAINTS.maxAtkPenTotal}`
   }
   if (mainStats) {
     const caps = getAffixRollCaps(mainStats)
-    const outCap = isMb ? caps.hpPercent : caps.atkPercent
-    const outName = outPercentLabel(isMb)
+    const outCap = resolveAffixOutPercentCap(caps, isMb, isFengYu)
+    const outName = outPercentLabel(isMb, isFengYu)
     if (total > outCap + caps.mastery) {
       return `总词条数 ${total} 超出主词条约束上限（${outName}≤${outCap}，精通≤${caps.mastery}）`
     }
@@ -513,6 +568,7 @@ export function buildDirectAffixCounts(
   state: DirectAllocState,
   outPercent: number,
   critDmg: number,
+  isFengYu = false,
 ): AffixCounts {
   const counts = createEmptyAffixCounts()
   counts.pen = clampInt(state.pen, 0, 99)
@@ -524,6 +580,9 @@ export function buildDirectAffixCounts(
     counts.hpFlat = clampInt(state.hpFlat, 0, 99)
     counts.hpPercent = clampInt(outPercent, 0, 99)
     counts.atkPercent = clampInt(state.atkPercent, 0, 99)
+  } else if (isFengYu) {
+    counts.defFlat = clampInt(state.flatStat, 0, 99)
+    counts.defPercent = clampInt(outPercent, 0, 99)
   } else {
     counts.atkFlat = clampInt(state.flatStat, 0, 99)
     counts.atkPercent = clampInt(outPercent, 0, 99)
@@ -536,10 +595,11 @@ export function buildAnomalyAffixCounts(
   state: AnomalyAllocState,
   outPercent: number,
   mastery: number,
+  isFengYu = false,
 ): AffixCounts {
   const counts = createEmptyAffixCounts()
-  const flatKey = flatStatKey(isMb)
-  const percentKey = outPercentKey(isMb)
+  const flatKey = flatStatKey(isMb, isFengYu)
+  const percentKey = outPercentKey(isMb, isFengYu)
   counts[flatKey] = clampInt(state.flatStat, 0, 99)
   counts.pen = clampInt(state.pen, 0, 99)
   counts[percentKey] = clampInt(outPercent, 0, 99)
@@ -553,35 +613,12 @@ function computePiercePower(hp: number, atk: number, pierceMod = 0) {
 
 export type OptimalPanelBreakdown = ReturnType<typeof computeFinalPanel>
 
-function buildOptimalExtraModsForEvent(
-  ctx: OptimalEvalContext,
-  hit: ResolvedHit,
-  slotAgentId: string,
-): BuffStatModifiers {
-  const gains = ctx.extraGains ?? []
-  if (!gains.length) return createEmptyBuffStatModifiers()
-  const ownerAgentId = hit.ownerAgentId
-  const ownerElement = ctx.panelContext.agents.find((item) => item.id === ownerAgentId)?.element
-  const slotIndex = ctx.panelContext.teamSlots.findIndex((slot) => slot.agentId === slotAgentId)
-  return mergeExtraModsForEvent(gains, buildSkillContextFromHit(hit, ownerElement), {
-    slotIndex,
-    slotAgentId,
-    staggerPhase: hit.staggerPhase,
-    resolveAgentProfession: (agentId) =>
-      ctx.panelContext.agents.find((item) => item.id === agentId)?.profession,
-    teamSlots: ctx.panelContext.teamSlots,
-    agents: ctx.panelContext.agents,
-  })
-}
-
 function buildPanelContextForSlot(
   ctx: OptimalEvalContext,
   slotIndex: number,
   externalForSlot: PanelStats,
   mainExternalPanel: PanelStats,
-  extraModsOverride?: BuffStatModifiers,
 ): PanelCalcContext {
-  const extraMods = extraModsOverride ?? ctx.panelContext.extraMods ?? createEmptyBuffStatModifiers()
   const level =
     slotIndex === ctx.panelContext.mainSlotIndex
       ? ctx.enemyInput.level
@@ -590,20 +627,16 @@ function buildPanelContextForSlot(
     ...ctx.panelContext,
     mainSlotIndex: slotIndex,
     mainExternalPanel: mainExternalPanel,
-    extraMods,
     extraGains: ctx.extraGains,
     buffSelection: ctx.slotBuffSelections
       ? resolveBuffSelectionForSlot(ctx.slotBuffSelections, slotIndex)
       : ctx.panelContext.buffSelection,
     attrValues: panelToConvertAttrValues(externalForSlot, { level, pierceMod: 0 }),
   }
-  const panelSourceValuesRecord = buildPanelSourceValuesBySlotRecord(base, externalForSlot)
-  const panelSourceValuesBySlot = new Map(
-    Object.entries(panelSourceValuesRecord).map(([key, value]) => [Number(key), value]),
-  )
+  const panelSourceValuesBySlot = buildPanelSourceValuesBySlotMap(base, externalForSlot)
   return {
     ...base,
-    panelSourceValues: panelSourceValuesRecord[slotIndex],
+    panelSourceValues: panelSourceValuesBySlot.get(slotIndex),
     panelSourceValuesBySlot,
   }
 }
@@ -616,13 +649,14 @@ function resolveRemielSelfRadianceCalcForOptimal(
   skillContext?: import('@/types/calculator').SkillCalcContext,
 ) {
   const remiel = findLuminousAgentInTeam(ctx.panelContext.teamSlots, ctx.panelContext.agents)
-  if (!remiel || !isRemielSelfRadiancePowerProvider(anomalyPowerAgentId, remiel.id)) {
+  const policy = resolvePanelViewPolicyForRadiance(anomalyPowerAgentId, remiel?.id)
+  if (policy.id !== 'remiel-self-radiance' || !remiel || !policy.resolveRadianceCalcInput) {
     return undefined
   }
   const external = resolveExternalForAgent(ctx, remiel.id, remiel.slotIndex, mainExternal)
   const agent = ctx.panelContext.agents.find((item) => item.id === remiel.id)
   const baseCtx = buildPanelContextForSlot(ctx, remiel.slotIndex, external, mainExternal)
-  return resolveRemielSelfRadianceCalcInput({
+  return policy.resolveRadianceCalcInput({
     teamSlots: ctx.panelContext.teamSlots,
     agents: ctx.panelContext.agents,
     externalPanel: external,
@@ -642,9 +676,52 @@ function resolveExternalForAgent(
   if (slotIndex === ctx.panelContext.mainSlotIndex) return mainExternal
   const mapped = ctx.panelContext.slotExternalPanels?.[slotIndex]
   if (mapped) return fillPanelStatsDefaults(mapped)
-  const anomaly = ctx.panelContext.anomalySlotPanels?.[agentId]
+  const anomaly = ctx.panelContext.activeSlotPanels?.[agentId]
   if (anomaly) return fillPanelStatsDefaults(anomaly)
   return createDefaultExternalPanel()
+}
+
+/** A 是否有「按自己面板折算再给全队」且已勾选的转模。有则队友招式会跟着 A 词条变。 */
+let mainAgentTeamConvertReadsPanelCached: boolean | null = null
+
+function mainAgentTeamConvertReadsPanel(ctx: OptimalEvalContext): boolean {
+  if (mainAgentTeamConvertReadsPanelCached != null) return mainAgentTeamConvertReadsPanelCached
+  const mainIndex = ctx.panelContext.mainSlotIndex
+  const selection = ctx.slotBuffSelections
+    ? resolveBuffSelectionForSlot(ctx.slotBuffSelections, mainIndex)
+    : ctx.panelContext.buffSelection
+  for (const item of collectAllBuffEffects(ctx.panelContext)) {
+    if (parseSourceKeySlotIndex(item.sourceKey) !== mainIndex) continue
+    if (item.effect.applyTarget !== 'team') continue
+    if (item.effect.kind !== 'convert' || !item.effect.convert) continue
+    if ((item.effect.convert.panelSource ?? 'external') === 'manual') continue
+    if (!isEffectEnabled(item.effect, selection)) continue
+    mainAgentTeamConvertReadsPanelCached = true
+    return true
+  }
+  mainAgentTeamConvertReadsPanelCached = false
+  return false
+}
+
+/**
+ * 这招算伤害时有没有用到 A 正在变的那张面板。
+ * 用不到则整次「开始计算」只算一次，每根柱共用。拿不准当用到。
+ */
+export function optimalHitDependsOnMainAffixPanel(
+  ctx: OptimalEvalContext,
+  hit: ResolvedHit,
+): boolean {
+  const mainId = ctx.mainAgentId
+  if (!mainId) return true
+  if (hit.ownerAgentId === mainId) return true
+  if (hit.anomalyPowerAgentId === mainId) return true
+  if (hit.triggerAgentId === mainId) return true
+  if (mainAgentTeamConvertReadsPanel(ctx)) return true
+  const remiel = findLuminousAgentInTeam(ctx.panelContext.teamSlots, ctx.panelContext.agents)
+  if (remiel?.id === mainId) {
+    if (hit.skill.damageType === 'radiance' || hit.anomalySubKind === 'radiance') return true
+  }
+  return false
 }
 
 function resolveProducerAgentLevel(_ctx: OptimalEvalContext, agentId: string | null | undefined): number {
@@ -662,6 +739,7 @@ function applyEventMultOverrides(
 function resolveLuminousTeamModifiersForOptimal(
   ctx: OptimalEvalContext,
   mainExternal: PanelStats,
+  includeDetails = true,
 ): {
   mutationZone: number
   radianceResPen: number
@@ -674,18 +752,22 @@ function resolveLuminousTeamModifiersForOptimal(
   if (!found) return { mutationZone: 1, radianceResPen: 0 }
   const tSlotIndex = found.slotIndex
   const producerExternal = resolveExternalForAgent(ctx, found.id, tSlotIndex, mainExternal)
-  const breakdown = computeFinalPanel(producerExternal, {
-    ...buildPanelContextForSlot(ctx, tSlotIndex, producerExternal, mainExternal),
-    skillContext: {
-      damageKind: 'anomaly',
-      categoryId: 'basic',
-      subcategoryId: null,
-      element: found.element,
-      staggerPhase: 'stagger',
-      isFollowUp: false,
-      anomalySubKind: 'radiance',
+  const breakdown = computeFinalPanel(
+    producerExternal,
+    {
+      ...buildPanelContextForSlot(ctx, tSlotIndex, producerExternal, mainExternal),
+      skillContext: {
+        damageKind: 'anomaly',
+        categoryId: 'basic',
+        subcategoryId: null,
+        element: found.element,
+        staggerPhase: 'stagger',
+        isFollowUp: false,
+        anomalySubKind: 'radiance',
+      },
     },
-  })
+    includeDetails ? undefined : PANEL_NUMBERS_ONLY,
+  )
   const panel = breakdown.finalPanel
   const agent = ctx.panelContext.agents.find((item) => item.id === found.id)
   return {
@@ -700,14 +782,32 @@ function resolveLuminousTeamModifiersForOptimal(
 
 export function evaluateOptimalEventDetail(
   ctx: OptimalEvalContext,
-  mainExternal: PanelStats,
+  mainExternal: PanelStats | null,
   hit: ResolvedHit,
+  options?: {
+    includeDetails?: boolean
+    /**
+     * 要求「该角色有面板」才出伤害（伤害页四条入口传 true；最优分配的候选评估不传）。
+     *
+     * 必要条件（所有者口径 2026-09-12）：没点导入 → 没有面板 → 没有伤害。
+     * 关掉它，Buff 里的固定攻击/暴击仍会算出一份不小的数 —— 那会让人以为面板还在。
+     */
+    requirePanel?: boolean
+  },
 ): OptimalEventEvalDetail | null {
+  // mainPanel 为 null 时（「伤害面板」3 选 1 选了角色配置面板），用主槽激活面板兜底：
+  // 普通模式的事件明细同样要能点开（同一套流程计算）。
+  const mainSlotAgentId = ctx.panelContext.teamSlots[ctx.panelContext.mainSlotIndex ?? -1]?.agentId
+  const mainPanel = mainExternal ?? (mainSlotAgentId ? ctx.panelContext.activeSlotPanels?.[mainSlotAgentId] : undefined) ?? null
+  const includeDetails = options?.includeDetails !== false
+  const panelOpts = includeDetails ? undefined : PANEL_NUMBERS_ONLY
   const skipReason = getHitSkipReason(hit, {
     teamSlots: ctx.panelContext.teamSlots,
     agents: ctx.panelContext.agents,
   })
   if (skipReason) return null
+  // 主 C 没面板时任何事件明细都算不出（主 C 面板是全部事件的参照基底）
+  if (!mainPanel) return null
 
   const damageType = hit.skill.damageType
   const anomalySubKind = hit.anomalySubKind
@@ -721,6 +821,18 @@ export function evaluateOptimalEventDetail(
 
   const evtPowerAgentId = hit.anomalyPowerAgentId
   if (eventNeedsTrigger && !evtPowerAgentId) return null
+
+  if (options?.requirePanel) {
+    // 出手的角色没面板 → 这一条不出伤害
+    if (!hasExternalPanelForSlot(ownerSlotIndex, ctx.panelContext)) return null
+    // 异常类还要强度提供者的面板（它身上的精通/异常增伤才配得出来）
+    if (eventNeedsTrigger && evtPowerAgentId) {
+      const providerSlotIndex = ctx.panelContext.teamSlots.findIndex(
+        (slot) => slot.agentId === evtPowerAgentId,
+      )
+      if (!hasExternalPanelForSlot(providerSlotIndex, ctx.panelContext)) return null
+    }
+  }
 
   const ownerAgent = ctx.panelContext.agents.find((item) => item.id === ownerAgentId)
   const evtOwnerIsMb = ownerAgent?.profession === MB_PROFESSION
@@ -737,30 +849,27 @@ export function evaluateOptimalEventDetail(
     : undefined
   const evtPowerElement = eventNeedsTrigger ? tAgent?.element : ownerAgent?.element
   const evtTriggerIsMb = tAgent?.profession === MB_PROFESSION
+  const evtTriggerBaseDamageSource = resolveBaseDamageSourceForProfession(tAgent?.profession)
 
-  const skillCtx = buildSkillContextFromHit(hit, ownerAgent?.element)
+  // 直伤用招式持有者属性；异常类改用异常强度提供者属性（元素恒取强度提供者）
+  const skillCtx = buildSkillContextFromHit(hit, evtPowerElement)
 
   const ownerExternal = resolveExternalForAgent(
     ctx,
     ownerAgentId,
     ownerSlotIndex,
-    mainExternal,
+    mainPanel,
   )
-  const ownerExtraMods = buildOptimalExtraModsForEvent(ctx, hit, ownerAgentId)
   const evtPanelCtx = {
-    ...buildPanelContextForSlot(
-      ctx,
-      ownerSlotIndex,
-      ownerExternal,
-      mainExternal,
-      ownerExtraMods,
-    ),
+    ...buildPanelContextForSlot(ctx, ownerSlotIndex, ownerExternal, mainPanel),
     skillContext: skillCtx,
+    // 行级增益例外：只影响本行结算（不动面板、不动层数累计）
+    rowBuffOverride: hit.buffOverride ?? null,
   }
-  const evtBreakdown = computeFinalPanel(ownerExternal, evtPanelCtx)
+  const evtBreakdown = computeFinalPanel(ownerExternal, evtPanelCtx, panelOpts)
   const zoneMultResolved = splitSkillZoneMultOverrides(damageType, hit.multOverrides)
   const panelOverrides = zoneMultResolved.panelOverrides
-  let evtFinalPanel = applyHitPanelMods(
+  const evtFinalPanel = applyHitPanelMods(
     applyEventMultOverrides(evtBreakdown.finalPanel, panelOverrides),
     hit.panelMods,
   )
@@ -797,13 +906,18 @@ export function evaluateOptimalEventDetail(
       producerExternalPanel = ownerExternal
       producerBreakdown = evtBreakdown
     } else {
-      const tExternal = resolveExternalForAgent(ctx, evtPowerAgentId, tSlotIndex, mainExternal)
+      const tExternal = resolveExternalForAgent(ctx, evtPowerAgentId, tSlotIndex, mainPanel)
       producerExternalPanel = tExternal
-      const tExtraMods = buildOptimalExtraModsForEvent(ctx, hit, evtPowerAgentId)
-      producerBreakdown = computeFinalPanel(tExternal, {
-        ...buildPanelContextForSlot(ctx, tSlotIndex, tExternal, mainExternal, tExtraMods),
-        skillContext: buildSkillContextFromHit(hit, tAgent?.element),
-      })
+      producerBreakdown = computeFinalPanel(
+        tExternal,
+        {
+          ...buildPanelContextForSlot(ctx, tSlotIndex, tExternal, mainPanel),
+          skillContext: buildSkillContextFromHit(hit, tAgent?.element),
+          // 同上：异常强度提供者那一侧也要吃本行的增益例外
+          rowBuffOverride: hit.buffOverride ?? null,
+        },
+        panelOpts,
+      )
       // 招式倍率覆写：紊乱/乱流落到强度提供者面板（最终倍率区填写不进面板基础字段）
       evtTriggerFinalPanel = applyEventMultOverrides(producerBreakdown.finalPanel, {
         disorderBaseMult: panelOverrides?.disorderBaseMult,
@@ -847,12 +961,11 @@ export function evaluateOptimalEventDetail(
   }
 
   const sub = ctx.resolveSubcategory?.(hit.skill.buffAnchorId ?? null) ?? null
-  const overrides = hit.multOverrides
   // 倍率修正只写面板，避免与 resolveSkillMults 双重相乘
   const effectiveSub =
     sub && panelOverrides ? mergeSkillSubcategoryMultOverrides(sub, panelOverrides) : sub
 
-  const luminousMods = resolveLuminousTeamModifiersForOptimal(ctx, mainExternal)
+  const luminousMods = resolveLuminousTeamModifiersForOptimal(ctx, mainPanel, includeDetails)
 
   // 属性异常/异放/耀变类型增伤取触发者；紊乱/乱流取持有者；直伤回落 owner
   let anomalyTriggerPanel = evtFinalPanel
@@ -869,19 +982,25 @@ export function evaluateOptimalEventDetail(
         ctx,
         hit.triggerAgentId,
         trigSlotIndex,
-        mainExternal,
+        mainPanel,
       )
       const trigAgent = ctx.panelContext.agents.find((item) => item.id === hit.triggerAgentId)
-      bonusBreakdown = computeFinalPanel(trigExternal, {
-        ...buildPanelContextForSlot(
-          ctx,
-          trigSlotIndex,
-          trigExternal,
-          mainExternal,
-          buildOptimalExtraModsForEvent(ctx, hit, hit.triggerAgentId),
-        ),
-        skillContext: buildSkillContextFromHit(hit, trigAgent?.element),
-      })
+      bonusBreakdown = computeFinalPanel(
+        trigExternal,
+        {
+          ...buildPanelContextForSlot(ctx, trigSlotIndex, trigExternal, mainPanel),
+          // 元素（属性系别）恒取异常强度提供者，避免触发者自身属性误匹配元素限定增益
+          skillContext: buildSkillContextFromHit(
+            hit,
+            (hit.anomalyPowerAgentId
+              ? ctx.panelContext.agents.find((item) => item.id === hit.anomalyPowerAgentId)?.element
+              : undefined) || trigAgent?.element,
+          ),
+          // 行级增益例外：重建 ctx 的地方必须显式带一遍，否则这一侧会漏掉本行的例外
+          rowBuffOverride: hit.buffOverride ?? null,
+        },
+        panelOpts,
+      )
       anomalyTriggerPanel = bonusBreakdown.finalPanel
       bonusExternalPanel = trigExternal
     }
@@ -907,20 +1026,17 @@ export function evaluateOptimalEventDetail(
       const trigExternal =
         triggerId === ownerAgentId
           ? ownerExternal
-          : resolveExternalForAgent(ctx, triggerId, trigSlotIndex, mainExternal)
+          : resolveExternalForAgent(ctx, triggerId, trigSlotIndex, mainPanel)
       const trigAgent = ctx.panelContext.agents.find((item) => item.id === triggerId)
       const trigPanelCtx =
         triggerId === ownerAgentId
           ? evtPanelCtx
           : {
-              ...buildPanelContextForSlot(
-                ctx,
-                trigSlotIndex,
-                trigExternal,
-                mainExternal,
-                buildOptimalExtraModsForEvent(ctx, hit, triggerId),
-              ),
-              skillContext: buildSkillContextFromHit(hit, trigAgent?.element),
+              ...buildPanelContextForSlot(ctx, trigSlotIndex, trigExternal, mainPanel),
+              // 元素（属性系别）恒取异常强度提供者，避免触发者自身属性误匹配元素限定增益
+              skillContext: buildSkillContextFromHit(hit, evtPowerElement || trigAgent?.element),
+              // 同上：异常触发者一侧也要吃本行的增益例外
+              rowBuffOverride: hit.buffOverride ?? null,
             }
       const releaseFields = resolveAnomalyReleaseMultFields(
         trigExternal,
@@ -944,10 +1060,13 @@ export function evaluateOptimalEventDetail(
     anomalyTriggerPanel = applyRadianceBonusMultOverrides(anomalyTriggerPanel, hit.multOverrides)
   }
 
+  // 全部异常子类的类型增伤/倍率/暴击均取异常类触发者（含紊乱/乱流）
   const usesTriggerBonus =
     damageType === 'anomaly' ||
     damageType === 'anomalyRelease' ||
-    damageType === 'radiance'
+    damageType === 'radiance' ||
+    damageType === 'disorder' ||
+    damageType === 'turbulence'
   const bonusFinalPanel = usesTriggerBonus ? anomalyTriggerPanel : evtFinalPanel
   const bonusExternalForTips = usesTriggerBonus ? bonusExternalPanel : ownerExternal
   const bonusBreakdownForTips = usesTriggerBonus ? bonusBreakdown : evtBreakdown
@@ -980,6 +1099,7 @@ export function evaluateOptimalEventDetail(
     combatStaggerVulnerableOnly: evtBreakdown.combatMods.staggerVulnerableOnly,
     combatSpecial: evtBreakdown.combatMods.special,
     combatPierceDmgBonus: evtBreakdown.combatMods.pierceDmgBonus,
+    combatSharpenDmgBonus: evtBreakdown.combatMods.sharpenDmgBonus,
     combatSharpenCritDmgBonus: evtBreakdown.combatMods.sharpenCritDmgBonus,
     combatDmgPenalty: evtBreakdown.combatMods.dmgPenalty,
     useSharpenFormula: evtUseSharpen,
@@ -995,7 +1115,7 @@ export function evaluateOptimalEventDetail(
     triggerFinalPanel: evtTriggerFinalPanel,
     triggerAgentElement: eventNeedsTrigger ? evtPowerElement : undefined,
     triggerPiercePower: evtTriggerPierce,
-    triggerBaseDamageSource: evtTriggerIsMb ? 'pierce' : 'atk',
+    triggerBaseDamageSource: evtTriggerBaseDamageSource,
     triggerIsMb: evtTriggerIsMb,
     skillSubcategory: effectiveSub,
     mainAgentLevel: resolveProducerAgentLevel(ctx, ownerAgentId),
@@ -1008,7 +1128,7 @@ export function evaluateOptimalEventDetail(
     remielSelfRadianceCalc: resolveRemielSelfRadianceCalcForOptimal(
       ctx,
       evtPowerAgentId,
-      mainExternal,
+      mainPanel,
       skillCtx,
     ),
     disorderZoneMultOverride: zoneMultResolved.disorderZoneMult,
@@ -1044,15 +1164,15 @@ export function evaluateOptimalEventDetail(
   let remielSelfExternalPanel: PanelStats | undefined
   let remielSelfSources: OptimalPanelBreakdown['sources'] | undefined
   let remielSelfFinalPanel: PanelStats | undefined
-  if (result.remielSelfRadianceActive && remiel) {
-    const remielExternal = resolveExternalForAgent(ctx, remiel.id, remiel.slotIndex, mainExternal)
-    const remielCtx = buildPanelContextForSlot(ctx, remiel.slotIndex, remielExternal, mainExternal)
-    const restricted = collectRemielSelfRestrictedContributions(
+  if (includeDetails && result.remielSelfRadianceActive && remiel) {
+    const remielExternal = resolveExternalForAgent(ctx, remiel.id, remiel.slotIndex, mainPanel)
+    const remielCtx = buildPanelContextForSlot(ctx, remiel.slotIndex, remielExternal, mainPanel)
+    const restricted = REMIEL_SELF_RADIANCE_VIEW_POLICY.collectRestrictedContributions!(
       remielExternal,
       { ...remielCtx, skillContext: skillCtx },
       remiel.slotIndex,
     )
-    const selfBreakdown = computeRemielSelfInCombatPanel(
+    const selfBreakdown = REMIEL_SELF_RADIANCE_VIEW_POLICY.computeInCombatPanel(
       remielExternal,
       remielCtx,
       remiel.slotIndex,
@@ -1116,7 +1236,7 @@ function evaluateOptimalDamageEvent(
   mainExternal: PanelStats,
   hit: ResolvedHit,
 ): OptimalEventDamageLine | null {
-  const detail = evaluateOptimalEventDetail(ctx, mainExternal, hit)
+  const detail = evaluateOptimalEventDetail(ctx, mainExternal, hit, PANEL_NUMBERS_ONLY)
   if (!detail) return null
   return {
     eventId: detail.eventId,
@@ -1127,6 +1247,29 @@ function evaluateOptimalDamageEvent(
     usesNonMainProducer: detail.usesNonMainProducer,
     mainlyProducerDriven: detail.mainlyProducerDriven,
   }
+}
+
+/**
+ * 取一条招式的伤害明细；「不随主 C 面板变化」的招式按 `hit.id` 跨轮复用。
+ *
+ * 判据是 `optimalHitDependsOnMainAffixPanel()`（拿不准时返回 true，即不缓存）。
+ * 调用方（求解器每评估一次、扫掠每个点）都会重复问同样这些招式，而这类招式的
+ * 结果在同一套配置下与主 C 词条无关，重算纯属浪费。
+ */
+function resolveEventLine(
+  ctx: OptimalEvalContext,
+  external: PanelStats,
+  hit: ResolvedHit,
+): OptimalEventDamageLine | null {
+  if (optimalHitDependsOnMainAffixPanel(ctx, hit)) {
+    return evaluateOptimalDamageEvent(ctx, external, hit)
+  }
+  if (!stableEventLinesByHitId) stableEventLinesByHitId = new Map()
+  const cached = stableEventLinesByHitId.get(hit.id)
+  if (cached) return cached
+  const line = evaluateOptimalDamageEvent(ctx, external, hit)
+  if (line) stableEventLinesByHitId.set(hit.id, line)
+  return line
 }
 
 function computeEventDamageLines(
@@ -1149,7 +1292,7 @@ function computeEventDamageLines(
   let firstBreakdown: OptimalPanelBreakdown | null = null
 
   for (const hit of hits) {
-    const line = evaluateOptimalDamageEvent(ctx, external, hit)
+    const line = resolveEventLine(ctx, external, hit)
     if (!line) continue
     eventLines.push(line)
     grandTotal += line.total
@@ -1165,8 +1308,7 @@ function computeEventDamageLines(
           firstBreakdown.finalPanel.atk,
           firstBreakdown.totalMods.pierce,
         ),
-        baseDamageSource: ctx.isMb ? 'pierce' : ctx.baseDamageSource,
-        isMbMainAgent: ctx.isMb,
+        ...resolvePanelOnlyDamageCalcBase(ctx),
         enemyInput: ctx.enemyInput,
         combatVulnerable: firstBreakdown.combatMods.vulnerable,
         combatDirectVulnerable: firstBreakdown.combatMods.directVulnerable,
@@ -1179,6 +1321,7 @@ function computeEventDamageLines(
         combatStaggerVulnerableOnly: firstBreakdown.combatMods.staggerVulnerableOnly,
         combatSpecial: firstBreakdown.combatMods.special,
         combatPierceDmgBonus: firstBreakdown.combatMods.pierceDmgBonus,
+        combatSharpenDmgBonus: firstBreakdown.combatMods.sharpenDmgBonus,
         combatSharpenCritDmgBonus: firstBreakdown.combatMods.sharpenCritDmgBonus,
         combatDmgPenalty: firstBreakdown.combatMods.dmgPenalty,
         mainAgentElement: ctx.mainAgentElement,
@@ -1207,7 +1350,7 @@ function computeEventDamageLinesForSweep(
   let grandTotal = 0
   const eventLines: OptimalEventDamageLine[] = []
   for (const hit of hits) {
-    const line = evaluateOptimalDamageEvent(ctx, external, hit)
+    const line = resolveEventLine(ctx, external, hit)
     if (!line) continue
     eventLines.push(line)
     grandTotal += line.total
@@ -1224,30 +1367,26 @@ const affixSweepCache = new Map<
 export function evaluateAffixCountsForSweep(
   ctx: OptimalEvalContext,
   affixCounts: AffixCounts,
+  panelDeltas?: AffixDeltaMap,
 ): { grandTotal: number; eventLines: OptimalEventDamageLine[] } {
   resetAffixEvalCacheIfNeeded(ctx)
-  const cacheKey = affixCountsCacheKey(affixCounts)
+  const cacheKey = affixEvalCacheKey(affixCounts, panelDeltas, ctx.valuePerCount)
   const cached = affixSweepCache.get(cacheKey)
   if (cached) return cached
 
-  const external = computeExternalPanelFromAffixes({
-    agentBase: ctx.agentBase ?? createEmptyAgentBasePanel(),
-    wengineBaseAtk: ctx.wengineBaseAtk,
-    wengineAdvanced: ctx.wengineAdvanced ?? createEmptyWengineAdvancedStats(),
-    affixCounts,
-    driveDiscSelection: ctx.driveDiscSelection,
-    driveDiscMainStats: ctx.driveDiscMainStats,
-    driveDiscs: ctx.driveDiscs,
-  })
+  const external = computeExternalForEval(ctx, affixCounts, panelDeltas)
 
   let payload: { grandTotal: number; eventLines: OptimalEventDamageLine[] }
   if (ctx.hits?.length) {
-    payload = computeEventDamageLinesForSweep(ctx, external)
-  } else {
-    const breakdown = computeFinalPanel(external, {
-      ...buildPanelContextForSlot(ctx, ctx.panelContext.mainSlotIndex, external, external),
-      skillContext: ctx.panelContext.skillContext ?? undefined,
-    })
+    payload = computeEventDamageLinesForSweep(ctx, external)  } else {
+    const breakdown = computeFinalPanel(
+      external,
+      {
+        ...buildPanelContextForSlot(ctx, ctx.panelContext.mainSlotIndex, external, external),
+        skillContext: ctx.panelContext.skillContext ?? undefined,
+      },
+      PANEL_NUMBERS_ONLY,
+    )
     const piercePower = computePiercePower(
       breakdown.finalPanel.hp,
       breakdown.finalPanel.atk,
@@ -1256,8 +1395,7 @@ export function evaluateAffixCountsForSweep(
     const result = computeDamageResult({
       finalPanel: breakdown.finalPanel,
       piercePower,
-      baseDamageSource: ctx.isMb ? 'pierce' : ctx.baseDamageSource,
-      isMbMainAgent: ctx.isMb,
+      ...resolvePanelOnlyDamageCalcBase(ctx),
       enemyInput: ctx.enemyInput,
       combatVulnerable: breakdown.combatMods.vulnerable,
       combatDirectVulnerable: breakdown.combatMods.directVulnerable,
@@ -1270,6 +1408,7 @@ export function evaluateAffixCountsForSweep(
       combatStaggerVulnerableOnly: breakdown.combatMods.staggerVulnerableOnly,
       combatSpecial: breakdown.combatMods.special,
       combatPierceDmgBonus: breakdown.combatMods.pierceDmgBonus,
+      combatSharpenDmgBonus: breakdown.combatMods.sharpenDmgBonus,
       combatSharpenCritDmgBonus: breakdown.combatMods.sharpenCritDmgBonus,
       combatDmgPenalty: breakdown.combatMods.dmgPenalty,
       mainAgentElement: ctx.mainAgentElement,
@@ -1301,6 +1440,24 @@ export function evaluateAffixCountsForSweep(
 
 const AFFIX_EVAL_CACHE_MAX = 800
 let affixEvalCacheCtxSig = ''
+/**
+ * 当前上下文在**缓存键里**用的短标识。
+ *
+ * 缺陷与实测（2026-09-11，用户报「词条计算变慢」）：此前缓存键直接把上下文签名
+ * （`affixEvalCacheCtxSig`）拼在前面，而签名含全量角色 / 音擎 / 驱动盘文档 ——
+ * 实测一次 30 词条求解里键长 **4,217,995 字符**，241 次评估中仅「拼键 + Map 查找 +
+ * Map 写入」就花掉 **13.2 s**（真算只占 0.84 s），把求解从 888 ms 拖到 14 s。
+ * 每次拼键都会新建一个 4 MB 字符串、每次哈希都要重算，纯属浪费。
+ *
+ * 签名本身只需回答「变没变」（`resetAffixEvalCacheIfNeeded` 比的是它，变了就整体清缓存），
+ * 因此缓存键里改成用**等价的短 id**：签名一变、id 必变，隔断语义与原来逐位相同。
+ */
+let affixEvalCacheCtxKey = ''
+let affixEvalCacheCtxSeq = 0
+/**
+ * 增量表类型在 `affixLibrary.ts`（`AffixDeltaMap`）：只装局外增量。
+ * `gain:` 走 `extraGains`，不进这张表。
+ */
 const affixEvalCache = new Map<
   string,
   {
@@ -1314,8 +1471,94 @@ const affixEvalCache = new Map<
   }
 >()
 
-function affixCountsCacheKey(affixCounts: AffixCounts): string {
-  return `${affixCounts.hpFlat},${affixCounts.hpPercent},${affixCounts.atkFlat},${affixCounts.atkPercent},${affixCounts.pen},${affixCounts.critRate},${affixCounts.critDmg},${affixCounts.mastery}`
+/**
+ * 词条计数各字段的「每档值」。
+ *
+ * 分析侧现在把局外 `panel:` 都写进 `panelDeltas`，本表对分析路径恒为常量表。
+ * 省略时全部走常量表 —— 柱图（词条计算页）等仍按十格计数 × 本表折算。
+ */
+export type AffixValuePerCount = Record<keyof AffixCounts, number>
+
+/** valuePerCount 是否与默认常量表一致（一致就不进缓存键，保持既有键形态稳定） */
+function isDefaultValuePerCount(valuePerCount: AffixValuePerCount): boolean {
+  const keys = Object.keys(AFFIX_VALUE_PER_COUNT) as (keyof AffixCounts)[]
+  for (const key of keys) {
+    if (valuePerCount[key] !== AFFIX_VALUE_PER_COUNT[key]) return false
+  }
+  return true
+}
+
+function affixCountsCacheKey(
+  affixCounts: AffixCounts,
+  panelDeltas?: AffixDeltaMap,
+  valuePerCount?: AffixValuePerCount,
+  extraGains?: ExtraBuffGain[],
+): string {
+  // 必须覆盖 AffixCounts 的全部字段：锋御走 defFlat/defPercent，
+  // 漏掉会让不同防御档数命中同一条缓存，返回错误伤害。
+  const base = `${affixCounts.hpFlat},${affixCounts.hpPercent},${affixCounts.atkFlat},${affixCounts.atkPercent},${affixCounts.defFlat},${affixCounts.defPercent},${affixCounts.pen},${affixCounts.critRate},${affixCounts.critDmg},${affixCounts.mastery}`
+  /**
+   * 每档值必须进键。
+   *
+   * 本项目已因「缓存键漏字段」栽过两次（`defFlat/defPercent`、`agentBase/wengineAdvanced`）。
+   * 漏掉 `valuePerCount` 会以新形式复发同一个病症：
+   * **改「每档」数字，伤害一动不动** —— 正是本次词条库改造要修的东西。
+   * 默认值不进键，让柱图等既有调用点的键形态与改造前完全一致。
+   */
+  const valuePart =
+    valuePerCount && !isDefaultValuePerCount(valuePerCount)
+      ? `|vpc:${(Object.keys(AFFIX_VALUE_PER_COUNT) as (keyof AffixCounts)[])
+          .map((key) => valuePerCount[key])
+          .join(',')}`
+      : ''
+  const extraGainPart = extraGainsCachePart(extraGains)
+  if (!panelDeltas) return `${base}${valuePart}${extraGainPart}`
+  const parts = (Object.keys(panelDeltas) as AffixPanelDeltaField[])
+    .sort()
+    .filter((key) => Boolean(panelDeltas[key]))
+    .map((key) => `${key}=${panelDeltas[key]}`)
+  const deltaPart = parts.length ? `|${parts.join(',')}` : ''
+  return `${base}${valuePart}${deltaPart}${extraGainPart}`
+}
+
+/**
+ * 候选词条的 extraGains 指纹：进**每评估键**，不进 ctx 签名。
+ *
+ * 若把它们写进 `{ ...ctx, extraGains }` 再当缓存上下文，每次评估都会清整表。
+ * 空数组 / undefined 不进键，默认库路径的键形态与改造前一致。
+ */
+function extraGainsCachePart(extraGains?: ExtraBuffGain[]): string {
+  if (!extraGains?.length) return ''
+  const parts = extraGains
+    .map(
+      (gain) =>
+        `${gain.id}:${gain.stat}:${gain.value}:${gain.applySituation ?? ''}:${gain.scope ?? ''}:${gain.skillCategory ?? ''}:${gain.skillSubcategoryId ?? ''}:${gain.appliesToAnomaly ? '1' : '0'}`,
+    )
+    .sort()
+  return `|eg:${parts.join(',')}`
+}
+
+/**
+ * 评估缓存键 = **上下文短标识** + 词条数。
+ *
+ * 只按词条数做键时，同一套词条在不同上下文下会互相命中：实测（2026-09-11，真实方案）
+ * 主属性组合试算用 `mainBaseExternalPanel: null` 评估（换主属性必须重新推导面板），
+ * 它把「无基准」的结果写进缓存；随后柱图/详情再评估同一套词条直接命中该条，
+ * 详情总伤从 74,222,437 掉成 56,758,629 —— 就是用户看到的「柱图与详情对不上」。
+ *
+ * 标识由 `resetAffixEvalCacheIfNeeded()` 在调用前备好（同一份 ctx 走记忆化，不增开销），
+ * 这里直接复用；这样即便将来签名又漏了字段，也不会跨上下文串值。
+ *
+ * 注意**不要**把签名原文（几 MB）拼进键：那会让每次评估都新建并哈希一个巨型字符串，
+ * 实测把求解从 888 ms 拖到 14 s（见 `affixEvalCacheCtxKey` 的说明）。
+ */
+function affixEvalCacheKey(
+  affixCounts: AffixCounts,
+  panelDeltas?: AffixDeltaMap,
+  valuePerCount?: AffixValuePerCount,
+  extraGains?: ExtraBuffGain[],
+): string {
+  return `${affixEvalCacheCtxKey}|${affixCountsCacheKey(affixCounts, panelDeltas, valuePerCount, extraGains)}`
 }
 
 function serializeBuffSelection(state: BuffSelectionState | null | undefined): string {
@@ -1338,7 +1581,30 @@ function serializeMultiSlotBuffSelection(
   return `${serializeBuffSelection(multi.team)}#${slotPart}`
 }
 
+/**
+ * 上下文签名的记忆化。
+ *
+ * 背景：签名要把十余个字段 `JSON.stringify`（含本次新增的 agentBase / wengineAdvanced），
+ * 实测这部分约占「面板口径」单次评估的**一半**开销；而一次求解或一次收益表重算里
+ * `ctx` 始终是**同一个对象**，签名结果必然相同，逐次重算是纯浪费。
+ *
+ * 按 `ctx` 对象身份缓存后，签名从「每次评估算一遍」变为「每个 ctx 算一遍」。
+ *
+ * 前提：调用方不得**就地修改** `ctx` 的字段（当前全项目已核对：无此用法；
+ * `buildOptimalEvalContext` 每次返回新对象，页面侧 `evalCtx` 是 computed）。
+ * 若将来出现就地修改，需在改完显式调用 `clearAffixEvalCache()`。
+ */
+const affixCtxSignatureCache = new WeakMap<OptimalEvalContext, string>()
+
 function affixEvalContextSignature(ctx: OptimalEvalContext): string {
+  const memo = affixCtxSignatureCache.get(ctx)
+  if (memo !== undefined) return memo
+  const signature = computeAffixEvalContextSignature(ctx)
+  affixCtxSignatureCache.set(ctx, signature)
+  return signature
+}
+
+function computeAffixEvalContextSignature(ctx: OptimalEvalContext): string {
   const events =
     ctx.hits
       ?.map(
@@ -1353,40 +1619,225 @@ function affixEvalContextSignature(ctx: OptimalEvalContext): string {
     ctx.mainAgentId ?? '',
     ctx.mainAgentElement ?? '',
     ctx.isMb ? '1' : '0',
+    ctx.isFengYu ? '1' : '0',
     ctx.wengineBaseAtk ?? 0,
+    ctx.wengineBaseDef ?? 0,
+    /**
+     * 角色基础面板与音擎加成必须整体入签名。
+     *
+     * 修复前的缺陷（2026-09-10 实测复现）：签名只带 `mainAgentId` 与
+     * `wengineBaseAtk/wengineBaseDef`，而 `buildAffixExternalFixedParts` 真正读的是
+     * `ctx.agentBase` 与 `ctx.wengineAdvanced`。于是下面两种操作会命中旧上下文、
+     * 拿到过期的基础值：
+     *   1. 换成「基础攻击/防御相同、但加成不同」的音擎（如两把基础攻击都是 594 的 S 音擎）；
+     *   2. 同一角色 id 的基础面板发生变化（例如重新加载角色数据）。
+     * 表现为换完音擎后伤害/面板一动不动。
+     */
+    JSON.stringify(ctx.agentBase ?? null),
+    JSON.stringify(ctx.wengineAdvanced ?? null),
     ctx.baseDamageSource ?? '',
     JSON.stringify(ctx.driveDiscMainStats),
+    /**
+     * 基准局外面板必须入签名。
+     *
+     * 主属性组合试算会用 `mainBaseExternalPanel: null` 评估「换一套主属性会怎样」
+     * （见组件 `evaluateMainStatComboDamage`：主属性变了面板必须重新推导），
+     * 而它的主属性/套装在「当前这套」时与常规 ctx 完全相同 —— 也就是说**只有基准不同**。
+     * 漏掉它，两者签名一致 → 共用同一份缓存 → 谁先算谁的值被另一边读走。
+     */
+    JSON.stringify(ctx.mainBaseExternalPanel ?? null),
+    /**
+     * 每档值必须入签名。
+     *
+     * 它与 `agentBase` / `wengineAdvanced` 同类：都影响「由词条数算出来的局外面板」。
+     * 词条库改「每档」后若签名不变，柱图 / 详情 / 基准总伤会共用同一条旧缓存，
+     * 表现为「改了每档，数字一动不动」。
+     */
+    JSON.stringify(ctx.valuePerCount ?? null),
     // 主词条组合试算会改 2/4 件套；缺失会导致同词条数命中旧缓存，伤害不变
     JSON.stringify(ctx.driveDiscSelection),
     JSON.stringify(ctx.enemyInput),
     JSON.stringify(ctx.panelContext.skillContext),
     JSON.stringify(ctx.extraGains ?? []),
-    JSON.stringify(ctx.panelContext.anomalySlotPanels ?? {}),
+    JSON.stringify(ctx.panelContext.activeSlotPanels ?? {}),
     JSON.stringify(ctx.panelContext.convertSlotPanels ?? {}),
     events,
     serializeMultiSlotBuffSelection(ctx.slotBuffSelections),
     ctx.triggerAnomalyAgentId ?? '',
+    /**
+     * 队伍级数据必须入签名。
+     *
+     * 缺陷与实测（2026-09-09 起就有、2026-09-10 用真实方案复现）：引擎会读队友数据
+     * （`collectTeamDriveDiscMods` 遍历全部槽位、`collectAllBuffEffects` 取全队效果、
+     * 事件按 `ownerAgentId/anomalyPowerAgentId` 反查角色文档），但签名只覆盖主 C。
+     * 于是**只改队友、不动主 C** 时签名不变 → 缓存不失效 → 结果停在旧值。
+     *
+     * 实测（真实方案，把 1 号队友的音擎从 Electro_Lip_Gloss 换成 Identity_Base）：
+     * - 不手动清缓存：61863011 → **61863011**（错，两次一样）
+     * - 每次手动清缓存：61863011 → **58285182**（对，确实应该变）
+     *
+     * 收进来的内容：槽位配置、全量角色/音擎/驱动盘文档、邦布、页级选择态。
+     * 这几份 JSON 串合计 8~12ms，而签名按 ctx 对象身份记忆化（`affixCtxSignatureCache`），
+     * 同一份 ctx 只算一次 —— 求解 200 次评估共用，摊薄后可忽略。
+     */
+    JSON.stringify(ctx.panelContext.teamSlots ?? []),
+    JSON.stringify(ctx.panelContext.agents ?? []),
+    JSON.stringify(ctx.panelContext.wengines ?? []),
+    JSON.stringify(ctx.panelContext.driveDiscs ?? []),
+    JSON.stringify(ctx.panelContext.bangboo ?? null),
+    /**
+     * 邦布精炼**必须单独入签名**：`ctx.panelContext.bangboo` 是邦布文档本身，
+     * 精炼只决定「取 refinementEffects 的第几组」，不体现在文档内容里。
+     *
+     * 缺陷与依据（2026-09-10，审计同类缺口时发现）：`panelBuffCalc.ts` 的
+     * `clampRefine(ctx.bangbooRefine) - 1` 用它选精炼效果块；而
+     * `zzz-hp-backend/scripts/data/zzz-hp-calculator-buffs.json` 里同一邦布不同精炼
+     * 效果确实不同（snap：精1 全队 dmgBonus 6.8 → 精5 10；biggest_fan：精1 atk 50 → 精5 100）。
+     * 只改精炼而签名不变，就会沿用旧精炼的结果。
+     */
+    ctx.panelContext.bangbooRefine ?? 1,
+    JSON.stringify(ctx.panelContext.buffSelection ?? null),
+    /**
+     * 场地 / 环境 Buff（危局、Boss 场地、防卫房间）必须入签名，且要含**内容**。
+     *
+     * 缺陷与实测（2026-09-11，`scripts/test-env-buff-cache-key.mjs`）：
+     * 原先只有 `buffSelection`（勾选状态）。同一 effect id、勾选不变、仅改数值
+     * （+30% → +60%）时签名不变 → 词条评估沿用旧值（实测两次都是 1484）。
+     * 同批把 `panelBuffCalc.environmentBuffsKey` 也从「只用 sourceKey」改为含内容，
+     * 否则面板级目录缓存同样会停在旧 mods；两处缺一不可。
+     */
+    JSON.stringify(ctx.panelContext.environmentBuffs ?? null),
+    ctx.panelContext.liveExternalSlotIndex ?? '',
   ].join('|')
 }
+
+let affixExternalFixedParts: AffixExternalFixedParts | null = null
+
+/**
+ * 「不随主 C 面板变化的招式」的伤害明细缓存（按 hit.id）。
+ *
+ * 判定见 `optimalHitDependsOnMainAffixPanel()`：持有者 / 异常强度提供者 / 触发者
+ * 都不是主 C，且队伍里没有主 C 的转模作用于全队时，该招式的伤害在同一套配置下
+ * 与主 C 词条无关。早期只有扫掠路径这样缓存，求解器路径没有，于是求解器每评估
+ * 一次就把这些招式全部重算一遍 —— 实测（42 招式）占单次评估约 60%。
+ * 上下文签名变化时由 `resetAffixEvalCacheIfNeeded()` 统一清空，与其它缓存同生命周期。
+ */
+let stableEventLinesByHitId: Map<string, OptimalEventDamageLine> | null = null
 
 function resetAffixEvalCacheIfNeeded(ctx: OptimalEvalContext) {
   const sig = affixEvalContextSignature(ctx)
   if (sig !== affixEvalCacheCtxSig) {
     affixEvalCache.clear()
     affixSweepCache.clear()
+    affixExternalFixedParts = null
+    stableEventLinesByHitId = null
+    mainAgentTeamConvertReadsPanelCached = null
     affixEvalCacheCtxSig = sig
+    // 签名变了 → 换一把短 id，缓存键里的上下文段随之失效（见 affixEvalCacheCtxKey）
+    affixEvalCacheCtxSeq += 1
+    affixEvalCacheCtxKey = `c${affixEvalCacheCtxSeq}`
   }
 }
 
 export function clearAffixEvalCache() {
   affixEvalCache.clear()
   affixSweepCache.clear()
+  affixExternalFixedParts = null
+  stableEventLinesByHitId = null
+  mainAgentTeamConvertReadsPanelCached = null
   affixEvalCacheCtxSig = ''
+  affixEvalCacheCtxSeq += 1
+  affixEvalCacheCtxKey = `c${affixEvalCacheCtxSeq}`
+}
+
+function getAffixExternalFixedParts(ctx: OptimalEvalContext): AffixExternalFixedParts {
+  if (!affixExternalFixedParts) {
+    affixExternalFixedParts = buildAffixExternalFixedParts({
+      agentBase: ctx.agentBase ?? createEmptyAgentBasePanel(),
+      wengineBaseAtk: ctx.wengineBaseAtk,
+      wengineBaseDef: ctx.wengineBaseDef ?? 0,
+      wengineAdvanced: ctx.wengineAdvanced ?? createEmptyWengineAdvancedStats(),
+      driveDiscSelection: ctx.driveDiscSelection,
+      driveDiscMainStats: ctx.driveDiscMainStats,
+      driveDiscs: ctx.driveDiscs,
+    })
+  }
+  return affixExternalFixedParts
+}
+
+/**
+ * 本次评估用的主 C 局外面板 —— 求解 / 扫掠 / 收益表唯一的「取面板」入口。
+ *
+ * 有基准面板（「角色配置」录入的那份，`activeSlotPanels`）时：**面板是起点，
+ * 候选词条叠加其上** —— 词条是「在面板上再加 N 条」，不反推也不扣减面板里已有的词条。
+ * 百分比词条按「角色基础 + 音擎基础」折算，与 `applyAffixCountsToFixedParts` 同口径。
+ *
+ * 没有基准面板时回退到按槽位配置推导，行为与改造前逐位等价。
+ */
+function computeExternalForEval(
+  ctx: OptimalEvalContext,
+  affixCounts: AffixCounts,
+  panelDeltas?: AffixDeltaMap,
+  valuePerCount?: AffixValuePerCount,
+): PanelStats {
+  // 显式参数优先（求解器 / 收益表按自己的条目表算），否则用上下文里那份 ——
+  // 页面所有展示路径共用同一个 ctx，因此「每档」在哪儿改，哪儿就跟着变。
+  const vpc = valuePerCount ?? ctx.valuePerCount
+  const base = ctx.mainBaseExternalPanel
+  const external = base
+    ? applyAffixCountsOntoExternalPanel(
+        base,
+        affixCounts,
+        {
+          hp: ctx.agentBase?.hp ?? 0,
+          atk: (ctx.agentBase?.atk ?? 0) + (ctx.wengineBaseAtk ?? 0),
+          def: (ctx.agentBase?.def ?? 0) + (ctx.wengineBaseDef ?? 0),
+        },
+        vpc,
+      )
+    : applyAffixCountsToFixedParts(getAffixExternalFixedParts(ctx), affixCounts, vpc)
+  if (!panelDeltas) return external
+  /**
+   * 条目贡献的折算基础：**主 C 槽位的角色基础面板**，与主属性 / Buff 同口径。
+   *
+   * 不传就会让「异常掌控 / 能量恢复」这两个按基础值乘算的字段贡献归零 ——
+   * 所以这里是必填参数，漏传由类型检查拦住（见 `applyPanelDeltas`）。
+   */
+  return applyPanelDeltas(external, panelDeltas, {
+    anomalyControl: ctx.agentBase?.anomalyControl ?? 0,
+    energyRegen: ctx.agentBase?.energyRegen ?? 0,
+    hp: ctx.agentBase?.hp ?? 0,
+    atk: (ctx.agentBase?.atk ?? 0) + (ctx.wengineBaseAtk ?? 0),
+    def: (ctx.agentBase?.def ?? 0) + (ctx.wengineBaseDef ?? 0),
+  })
+}
+
+/**
+ * 库路径 `gain:` 条目的 extraGains：缓存查找之后才并入 ctx 副本。
+ * 页级 extraGains 仍在原 ctx 上，走上下文签名。
+ *
+ * 招式流程选「最优分配 / 当前柱」重算时也要走这里：这些增益不在局外面板上。
+ */
+export function withAffixLibraryExtraGains(
+  ctx: OptimalEvalContext,
+  extraGains?: ExtraBuffGain[],
+): OptimalEvalContext {
+  if (!extraGains?.length) return ctx
+  const applySlot = ctx.panelContext.mainSlotIndex
+  const tagged = extraGains.map((gain) => ({
+    ...gain,
+    applySlot: gain.applySlot ?? applySlot,
+    applyTarget: gain.applyTarget ?? 'self',
+  }))
+  return { ...ctx, extraGains: [...(ctx.extraGains ?? []), ...tagged] }
 }
 
 function evaluateAffixCountsUncached(
   ctx: OptimalEvalContext,
   affixCounts: AffixCounts,
+  panelDeltas?: AffixDeltaMap,
+  valuePerCount?: AffixValuePerCount,
+  extraGains?: ExtraBuffGain[],
 ): {
   finalPanel: PanelStats
   result: DamageCalcResult
@@ -1396,26 +1847,19 @@ function evaluateAffixCountsUncached(
   grandTotal: number
   eventLines: OptimalEventDamageLine[]
 } {
-  const external = computeExternalPanelFromAffixes({
-    agentBase: ctx.agentBase ?? createEmptyAgentBasePanel(),
-    wengineBaseAtk: ctx.wengineBaseAtk,
-    wengineAdvanced: ctx.wengineAdvanced ?? createEmptyWengineAdvancedStats(),
-    affixCounts,
-    driveDiscSelection: ctx.driveDiscSelection,
-    driveDiscMainStats: ctx.driveDiscMainStats,
-    driveDiscs: ctx.driveDiscs,
-  })
+  const external = computeExternalForEval(ctx, affixCounts, panelDeltas, valuePerCount)
+  const evalCtx = withAffixLibraryExtraGains(ctx, extraGains)
 
   if (ctx.hits?.length) {
     const { grandTotal, eventLines, firstResult, firstBreakdown } = computeEventDamageLines(
-      ctx,
+      evalCtx,
       external,
     )
     const breakdown =
       firstBreakdown ??
       computeFinalPanel(external, {
-        ...buildPanelContextForSlot(ctx, ctx.panelContext.mainSlotIndex, external, external),
-        skillContext: ctx.panelContext.skillContext ?? undefined,
+        ...buildPanelContextForSlot(evalCtx, evalCtx.panelContext.mainSlotIndex, external, external),
+        skillContext: evalCtx.panelContext.skillContext ?? undefined,
       })
     const piercePower = computePiercePower(
       breakdown.finalPanel.hp,
@@ -1427,8 +1871,7 @@ function evaluateAffixCountsUncached(
       computeDamageResult({
         finalPanel: breakdown.finalPanel,
         piercePower,
-        baseDamageSource: ctx.isMb ? 'pierce' : ctx.baseDamageSource,
-        isMbMainAgent: ctx.isMb,
+        ...resolvePanelOnlyDamageCalcBase(ctx),
         enemyInput: ctx.enemyInput,
         combatVulnerable: breakdown.combatMods.vulnerable,
         combatDirectVulnerable: breakdown.combatMods.directVulnerable,
@@ -1441,6 +1884,7 @@ function evaluateAffixCountsUncached(
         combatStaggerVulnerableOnly: breakdown.combatMods.staggerVulnerableOnly,
         combatSpecial: breakdown.combatMods.special,
         combatPierceDmgBonus: breakdown.combatMods.pierceDmgBonus,
+      combatSharpenDmgBonus: breakdown.combatMods.sharpenDmgBonus,
       combatSharpenCritDmgBonus: breakdown.combatMods.sharpenCritDmgBonus,
       combatDmgPenalty: breakdown.combatMods.dmgPenalty,
         mainAgentElement: ctx.mainAgentElement,
@@ -1465,8 +1909,8 @@ function evaluateAffixCountsUncached(
   }
 
   const breakdown = computeFinalPanel(external, {
-    ...buildPanelContextForSlot(ctx, ctx.panelContext.mainSlotIndex, external, external),
-    skillContext: ctx.panelContext.skillContext ?? undefined,
+    ...buildPanelContextForSlot(evalCtx, evalCtx.panelContext.mainSlotIndex, external, external),
+    skillContext: evalCtx.panelContext.skillContext ?? undefined,
   })
 
   const piercePower = computePiercePower(
@@ -1478,8 +1922,7 @@ function evaluateAffixCountsUncached(
   const result = computeDamageResult({
     finalPanel: breakdown.finalPanel,
     piercePower,
-    baseDamageSource: ctx.isMb ? 'pierce' : ctx.baseDamageSource,
-    isMbMainAgent: ctx.isMb,
+    ...resolvePanelOnlyDamageCalcBase(ctx),
     enemyInput: ctx.enemyInput,
     combatVulnerable: breakdown.combatMods.vulnerable,
     combatDirectVulnerable: breakdown.combatMods.directVulnerable,
@@ -1492,6 +1935,7 @@ function evaluateAffixCountsUncached(
     combatStaggerVulnerableOnly: breakdown.combatMods.staggerVulnerableOnly,
     combatSpecial: breakdown.combatMods.special,
     combatPierceDmgBonus: breakdown.combatMods.pierceDmgBonus,
+      combatSharpenDmgBonus: breakdown.combatMods.sharpenDmgBonus,
     combatSharpenCritDmgBonus: breakdown.combatMods.sharpenCritDmgBonus,
     combatDmgPenalty: breakdown.combatMods.dmgPenalty,
     mainAgentElement: ctx.mainAgentElement,
@@ -1519,10 +1963,7 @@ function evaluateAffixCountsUncached(
   }
 }
 
-export function evaluateAffixCounts(
-  ctx: OptimalEvalContext,
-  affixCounts: AffixCounts,
-): {
+export interface AffixCountsEvalResult {
   finalPanel: PanelStats
   result: DamageCalcResult
   piercePower: number
@@ -1530,41 +1971,80 @@ export function evaluateAffixCounts(
   breakdown: OptimalPanelBreakdown
   grandTotal: number
   eventLines: OptimalEventDamageLine[]
-} {
-  resetAffixEvalCacheIfNeeded(ctx)
-  const cacheKey = affixCountsCacheKey(affixCounts)
-  const cached = affixEvalCache.get(cacheKey)
-  if (cached) return cached
+}
 
-  const result = evaluateAffixCountsUncached(ctx, affixCounts)
+/**
+ * 与 `evaluateAffixCounts` 同源，额外回报本次是「缓存命中」还是「真算」。
+ *
+ * 用途：求解器需要按**真实计算量**记账——缓存命中只花真算约 1% 的时间，
+ * 计入预算会让预算虚耗并提前触发截断（见 `dev-docs/affix-optimizer-impl-log.md` 步骤 0）。
+ * 缓存键与淘汰逻辑复用同一份实现，避免两套键不一致返回错误伤害。
+ */
+export function evaluateAffixCountsWithCacheInfo(
+  ctx: OptimalEvalContext,
+  affixCounts: AffixCounts,
+  panelDeltas?: AffixDeltaMap,
+  valuePerCount?: AffixValuePerCount,
+  extraGains?: ExtraBuffGain[],
+): { value: AffixCountsEvalResult; cacheHit: boolean } {
+  resetAffixEvalCacheIfNeeded(ctx)
+  const vpc = valuePerCount ?? ctx.valuePerCount
+  const cacheKey = affixEvalCacheKey(affixCounts, panelDeltas, vpc, extraGains)
+  const cached = affixEvalCache.get(cacheKey)
+  if (cached) return { value: cached, cacheHit: true }
+
+  const result = evaluateAffixCountsUncached(ctx, affixCounts, panelDeltas, vpc, extraGains)
   if (affixEvalCache.size >= AFFIX_EVAL_CACHE_MAX) {
     const firstKey = affixEvalCache.keys().next().value
     if (firstKey) affixEvalCache.delete(firstKey)
   }
   affixEvalCache.set(cacheKey, result)
-  return result
+  return { value: result, cacheHit: false }
 }
 
-/** 使局内暴击率刚好 > 100% 的最小暴击条数（只算面板，不算事件） */
-export function findMinCritRollsForOvercap(
+export function evaluateAffixCounts(
   ctx: OptimalEvalContext,
-  baseState: Omit<DirectAllocState, 'critRate' | 'totalRolls'>,
-  maxSearch = DIRECT_CONSTRAINTS.maxTotalRolls,
-): number {
-  const critCap = affixRollCap(ctx.driveDiscMainStats, 'critRate')
-  const limit = Math.min(maxSearch, Number.isFinite(critCap) ? critCap : maxSearch)
-  const panelOnlyCtx: OptimalEvalContext = { ...ctx, hits: undefined }
-  for (let n = 0; n <= limit; n += 1) {
-    const counts = buildDirectAffixCounts(
-      ctx.isMb,
-      { ...baseState, critRate: n, totalRolls: n },
-      0,
-      0,
-    )
-    const { finalPanel } = evaluateAffixCounts(panelOnlyCtx, counts)
-    if (finalPanel.critRate > 100) return n
-  }
-  return limit
+  affixCounts: AffixCounts,
+  panelDeltas?: AffixDeltaMap,
+  valuePerCount?: AffixValuePerCount,
+  extraGains?: ExtraBuffGain[],
+): AffixCountsEvalResult {
+  return evaluateAffixCountsWithCacheInfo(
+    ctx,
+    affixCounts,
+    panelDeltas,
+    valuePerCount,
+    extraGains,
+  ).value
+}
+
+/**
+ * 「只改了固定词条（精通/穿透/小攻等）」时，能否原地刷新既有柱体而不重新枚举结构。
+ *
+ * 结构条件：既有各柱仍是「局外大% + 爆伤 = 剩余档数」。
+ *
+ * **上限条件同样必须满足**（2026-09-11 补）：4/5/6 主属性变化会改变主词条上限
+ * （36 − 6×同类数）。上限收紧后若仍原地刷新，就会留下完整扫掠本会跳过的柱 ——
+ * 实测（局外大防御上限 30 → 24，总词条 30）：完整扫掠出 25 根，原地刷新保留 31 根，
+ * 柱图里凭空多出 25~30 档「已超上限」的柱，且与 X 轴上限规则自相矛盾。
+ */
+export function canReuseDirectSweepStructure(
+  points: DirectSweepPoint[],
+  state: DirectAllocState,
+  isMb: boolean,
+  isFengYu: boolean,
+  mainStats: AffixDriveDiscMainStats,
+): boolean {
+  const crit = Math.round(state.critRate)
+  const total = Math.round(state.totalRolls)
+  const fixedAtk = isMb ? Math.round(state.atkPercent) : 0
+  const remain = isMb ? total - crit - fixedAtk : total - crit
+  if (remain < 0 || !points.length) return false
+  if (!points.every((p) => p.outPercent + p.critDmg === remain)) return false
+  const caps = getAffixRollCaps(mainStats)
+  if (crit > caps.critRate) return false
+  const outCap = resolveAffixOutPercentCap(caps, isMb, isFengYu)
+  return points.every((p) => p.outPercent <= outCap && p.critDmg <= caps.critDmg)
 }
 
 export function sweepDirectDamage(
@@ -1605,16 +2085,17 @@ export function sweepDirectDamage(
   }
 
   const remain = total - crit
-  const outLabel = outPercentLabel(false)
-  const outCap = caps.atkPercent
+  const outLabel = outPercentLabel(ctx.isMb, ctx.isFengYu)
+  const outCap = resolveAffixOutPercentCap(caps, ctx.isMb, ctx.isFengYu)
   for (let outPercent = 0; outPercent <= remain; outPercent += 1) {
     const critDmg = remain - outPercent
     if (outPercent > outCap || critDmg > caps.critDmg || crit > caps.critRate) continue
     const affixCounts = buildDirectAffixCounts(
-      false,
+      ctx.isMb,
       { ...state, critRate: crit, totalRolls: total },
       outPercent,
       critDmg,
+      ctx.isFengYu,
     )
     const evaled = evaluateAffixCounts(ctx, affixCounts)
     points.push({
@@ -1631,13 +2112,64 @@ export function sweepDirectDamage(
   return points
 }
 
-function yieldToMain(): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => resolve())
-    } else {
-      setTimeout(resolve, 0)
+/**
+ * 让出主线程一次，供分片异步任务（扫掠 / 求解器）保持页面响应。
+ *
+ * **为什么浏览器里用 MessageChannel 而不是 requestAnimationFrame**（2026-09-10 实测，真实浏览器）：
+ *
+ * | 让出方式 | 每次等待 |
+ * |---|---|
+ * | `requestAnimationFrame` | **16.66 ms**（绑定帧率） |
+ * | `setTimeout(0)` | **10.33 ms**（浏览器嵌套定时器钳制） |
+ * | `MessageChannel` | **0.01 ms** |
+ *
+ * 于是「多久让出一次」直接决定总耗时：模拟 251 次评估、纯计算 21ms，
+ * rAF 每 24 次让出 → 159ms；MessageChannel 每 24 次让出 → 26ms。
+ * 用户反馈的「词条分配变慢」就是这个：计算量没变，全花在等帧上了。
+ *
+ * 响应性仍然保证：每个时间片（见调用方的 `sliceBudgetMs`）结束后都会让出，
+ * 浏览器可在让出的间隙处理输入与绘制。
+ *
+ * **Node（脚本与测试）里走 `setImmediate`**：模块级 MessageChannel 会一直保活事件循环，
+ * 导致脚本跑完不退出（实测挂住不返回）；而 `port.unref()` 又会让纯 await 的脚本
+ * 以 unsettled top-level await 直接退出。`setImmediate` 两者皆无。
+ */
+const isBrowserMessageChannelUsable =
+  typeof window !== 'undefined' && typeof window.MessageChannel === 'function'
+
+// Node 的 setImmediate 不在 tsconfig 的 lib 里（`types: []` 刻意不引 @types/node），
+// 从 globalThis 上取，避免为它把 Node 全局类型拉进整个前端工程。
+const nodeSetImmediate = (
+  globalThis as { setImmediate?: (callback: () => void) => unknown }
+).setImmediate
+
+let yieldChannel: MessageChannel | null = null
+const yieldWaiters: (() => void)[] = []
+
+function scheduleYield(resolve: () => void): void {
+  if (isBrowserMessageChannelUsable) {
+    if (!yieldChannel) {
+      yieldChannel = new MessageChannel()
+      // 严格一一对应：一次 postMessage 唤醒一个等待者，避免并发让出时互相顶掉
+      yieldChannel.port1.onmessage = () => {
+        const waiter = yieldWaiters.shift()
+        if (waiter) waiter()
+      }
     }
+    yieldWaiters.push(resolve)
+    yieldChannel.port2.postMessage(null)
+    return
+  }
+  if (typeof nodeSetImmediate === 'function') {
+    nodeSetImmediate(resolve)
+    return
+  }
+  setTimeout(resolve, 0)
+}
+
+export function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => {
+    scheduleYield(resolve)
   })
 }
 
@@ -1699,16 +2231,17 @@ export async function sweepDirectDamageAsync(
   }
 
   const remain = total - crit
-  const outLabel = outPercentLabel(false)
-  const outCap = caps.atkPercent
+  const outLabel = outPercentLabel(ctx.isMb, ctx.isFengYu)
+  const outCap = resolveAffixOutPercentCap(caps, ctx.isMb, ctx.isFengYu)
   for (let outPercent = 0; outPercent <= remain; outPercent += 1) {
     const critDmg = remain - outPercent
     if (outPercent > outCap || critDmg > caps.critDmg || crit > caps.critRate) continue
     const affixCounts = buildDirectAffixCounts(
-      false,
+      ctx.isMb,
       { ...state, critRate: crit, totalRolls: total },
       outPercent,
       critDmg,
+      ctx.isFengYu,
     )
     const swept = evaluateAffixCountsForSweep(ctx, affixCounts)
     await pushPoint({
@@ -1730,15 +2263,21 @@ export function sweepAnomalyDamage(
   state: AnomalyAllocState,
 ): AnomalySweepPoint[] {
   const total = clampInt(state.totalRolls, 0, ANOMALY_CONSTRAINTS.maxTotalRolls)
-  const outLabel = outPercentLabel(ctx.isMb)
+  const outLabel = outPercentLabel(ctx.isMb, ctx.isFengYu)
   const caps = getAffixRollCaps(ctx.driveDiscMainStats)
-  const outCap = ctx.isMb ? caps.hpPercent : caps.atkPercent
+  const outCap = resolveAffixOutPercentCap(caps, ctx.isMb, ctx.isFengYu)
   const points: AnomalySweepPoint[] = []
 
   for (let outPercent = 0; outPercent <= total; outPercent += 1) {
     const mastery = total - outPercent
     if (outPercent > outCap || mastery > caps.mastery) continue
-    const affixCounts = buildAnomalyAffixCounts(ctx.isMb, { ...state, totalRolls: total }, outPercent, mastery)
+    const affixCounts = buildAnomalyAffixCounts(
+      ctx.isMb,
+      { ...state, totalRolls: total },
+      outPercent,
+      mastery,
+      ctx.isFengYu,
+    )
     const evaled = evaluateAffixCounts(ctx, affixCounts)
     points.push({
       outPercent,
@@ -1767,9 +2306,9 @@ export async function sweepAnomalyDamageAsync(
   const chunkSize = Math.max(1, options?.chunkSize ?? 6)
   const signal = options?.signal
   const total = clampInt(state.totalRolls, 0, ANOMALY_CONSTRAINTS.maxTotalRolls)
-  const outLabel = outPercentLabel(ctx.isMb)
+  const outLabel = outPercentLabel(ctx.isMb, ctx.isFengYu)
   const caps = getAffixRollCaps(ctx.driveDiscMainStats)
-  const outCap = ctx.isMb ? caps.hpPercent : caps.atkPercent
+  const outCap = resolveAffixOutPercentCap(caps, ctx.isMb, ctx.isFengYu)
   const points: AnomalySweepPoint[] = []
   let sinceYield = 0
 
@@ -1777,7 +2316,13 @@ export async function sweepAnomalyDamageAsync(
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     const mastery = total - outPercent
     if (outPercent > outCap || mastery > caps.mastery) continue
-    const affixCounts = buildAnomalyAffixCounts(ctx.isMb, { ...state, totalRolls: total }, outPercent, mastery)
+    const affixCounts = buildAnomalyAffixCounts(
+      ctx.isMb,
+      { ...state, totalRolls: total },
+      outPercent,
+      mastery,
+      ctx.isFengYu,
+    )
     if (ctx.hits?.length) {
       const swept = evaluateAffixCountsForSweep(ctx, affixCounts)
       points.push({
@@ -1864,8 +2409,8 @@ export function directCandidateKeys(isMb: boolean, isFengYu = false): OptimalAff
   return ['atkFlat', 'atkPercent', 'pen', 'mastery', 'critRate', 'critDmg']
 }
 
-export function anomalyCandidateKeys(isMb: boolean): OptimalAffixKey[] {
-  return [flatStatKey(isMb), outPercentKey(isMb), 'pen', 'mastery']
+export function anomalyCandidateKeys(isMb: boolean, isFengYu = false): OptimalAffixKey[] {
+  return [flatStatKey(isMb, isFengYu), outPercentKey(isMb, isFengYu), 'pen', 'mastery']
 }
 
 const SERIES_COLORS: Record<string, string> = {
@@ -1916,7 +2461,7 @@ export function computeDiffAnalysis(
   anomalyMetric: OptimalAnomalyMetric = 'anomaly',
   selectedEventIds?: string[] | null,
 ): { addOne: AffixDiffRow[]; replace: AffixReplaceRow[] } {
-  const candidates = kind === 'direct' ? directCandidateKeys(ctx.isMb) : anomalyCandidateKeys(ctx.isMb)
+  const candidates = kind === 'direct' ? directCandidateKeys(ctx.isMb, ctx.isFengYu) : anomalyCandidateKeys(ctx.isMb, ctx.isFengYu)
   const base = evaluateAffixForDiffMetric(ctx, baseCounts)
   const baseDmg = ctx.hits?.length
     ? resolveSweepMetricDamage(base, selectedEventIds)
@@ -1977,6 +2522,13 @@ export function computeDiffAnalysis(
   })
 
   addOne.sort((a, b) => b.damageDelta - a.damageDelta)
+
+  // 相对权重（2026-10-05 用户要求）：与收益表同口径 —— 分母 = 本表最大百分比差（≤0 全为 0）。
+  // capped 行计入分母集合但百分比恒为 0，不影响最大值。
+  const maxPercent = addOne.reduce((max, row) => Math.max(max, row.percentDelta), 0)
+  for (const row of addOne) {
+    row.weight = maxPercent > 0 ? row.percentDelta / maxPercent : 0
+  }
 
   const ownedKeys = candidates.filter((key) => (baseCounts[key] ?? 0) > 0)
   const replace: AffixReplaceRow[] = ownedKeys.map((key) => {
@@ -2061,7 +2613,7 @@ export function computeEventAffixImpact(
   if (!ctx.hits?.length) return []
   const base = evaluateAffixCounts(ctx, baseCounts)
   const baseById = new Map(base.eventLines.map((line) => [line.eventId, line.total]))
-  const candidates = kind === 'direct' ? directCandidateKeys(ctx.isMb) : anomalyCandidateKeys(ctx.isMb)
+  const candidates = kind === 'direct' ? directCandidateKeys(ctx.isMb, ctx.isFengYu) : anomalyCandidateKeys(ctx.isMb, ctx.isFengYu)
   const maxDeltaByEvent = new Map<string, number>()
 
   for (const key of candidates) {
@@ -2096,7 +2648,7 @@ export function computeBenefitCurves(
   maxAdded = BENEFIT_CURVE_MAX_ADDED,
   selectedEventIds?: string[] | null,
 ): { series: BenefitCurveSeries[]; nextStep: AffixDiffRow[] } {
-  const candidates = kind === 'direct' ? directCandidateKeys(ctx.isMb) : anomalyCandidateKeys(ctx.isMb)
+  const candidates = kind === 'direct' ? directCandidateKeys(ctx.isMb, ctx.isFengYu) : anomalyCandidateKeys(ctx.isMb, ctx.isFengYu)
   const metricOf = (evaled: ReturnType<typeof evaluateAffixForDiffMetric>) =>
     ctx.hits?.length
       ? resolveSweepMetricDamage(evaled, selectedEventIds)
@@ -2158,8 +2710,19 @@ export function computeBenefitCurves(
   return { series, nextStep }
 }
 
+export function outPercentFromAffixCounts(
+  counts: AffixCounts,
+  isMb: boolean,
+  isFengYu = false,
+): number {
+  if (isMb) return counts.hpPercent
+  if (isFengYu) return counts.defPercent
+  return counts.atkPercent
+}
+
 export function buildOptimalEvalContext(input: {
   isMb: boolean
+  isFengYu?: boolean
   teamSlots: TeamSlot[]
   agents: AgentBuffDoc[]
   wengines: WengineBuffDoc[]
@@ -2174,8 +2737,23 @@ export function buildOptimalEvalContext(input: {
   skillContext?: SkillCalcContext | null
   buffSelection?: BuffSelectionState | null
   slotBuffSelections?: MultiSlotBuffSelection | null
-  anomalySlotPanels?: Record<string, PanelStats>
+  /** 已解析的激活面板（每人一份）：调用方解析完来源再传进来 */
+  activeSlotPanels?: Record<string, PanelStats>
+  /** 主 C「词条导入」那一路的词条数（没有存面板时用来现推局外） */
+  mainAffixCounts?: AffixCounts
   convertSlotPanels?: import('@/utils/panelBuffCalc').ConvertSlotPanels
+  /**
+   * 各槽位局外面板（`index → PanelStats`），**整份覆盖**默认解析。
+   *
+   * 为什么需要：默认解析是「激活面板，取不到则按配置推导」（本文件下方 `Object.fromEntries`），
+   * 而面板计算链路取不到时会回落到「转模部分面板 → 默认面板」。两条链路的回落不同，
+   * 合并时由调用方把自己那份解析结果传进来，保证逐位一致
+   * （见 `dev-docs/affix-calc-manual.md` §4；实施见提交「计算链路统一·步骤①」）。
+   * 省略 = 保持原有解析。
+   */
+  slotExternalPanels?: Record<number, PanelStats>
+  /** 技能等级转模来源：按角色 id 的五大类技能等级 */
+  skillTalentLevelsByAgent?: Record<string, Partial<SkillTalentLevels> | null>
   hits?: ResolvedHit[]
   /** 页级异常强度提供者 id（命名含 trigger，实为 power） */
   triggerAnomalyAgentId?: string | null
@@ -2183,7 +2761,17 @@ export function buildOptimalEvalContext(input: {
   skillSubcategories?: SkillSubcategory[]
   followUpSkillRules?: import('@/types/calculator').FollowUpSkillRule[]
   environmentBuffs?: import('@/utils/environmentBuffCalc').EnvironmentBuffEntry[]
+  /**
+   * 词条「每档值」表（词条库条目的 `perRoll`）。省略 = 按 `AFFIX_VALUE_PER_COUNT`，
+   * 与改造前的行为逐位一致。
+   */
+  valuePerCount?: AffixValuePerCount
 }): OptimalEvalContext {
+  // 深解包响应式代理：引擎会对这批数据做海量属性读取，走 Proxy 陷阱会慢 3 倍以上
+  // （实测 16.4ms → 5.3ms/次评估，见 reactiveUnwrap.ts）。只换引用不改值，
+  // 写入仍走响应式链路，因此不会造成「面板改了但计算不更新」。
+  deepUnwrapReactive(input)
+
   const mainSlot = input.teamSlots[input.mainSlotIndex]!
   const mainAgent = input.agents.find((a) => a.id === mainSlot.agentId)
   const mainWengine =
@@ -2191,10 +2779,27 @@ export function buildOptimalEvalContext(input: {
       ? input.wengines.find((w) => w.id === mainSlot.wengineId)
       : null
 
+  /**
+   * 主 C 的**基准局外面板**：来自「角色配置」（导入录入写入的 `activeSlotPanels`）。
+   *
+   * 面板是起点，候选词条在它之上叠加 —— 见 `computeExternalForEval`。取不到时留 null，
+   * 由 `computeExternalForEval` 回退到「按槽位配置推导」（改造前的行为，逐位等价）。
+   */
+  const mainSavedPanel = mainSlot.agentId ? input.activeSlotPanels?.[mainSlot.agentId] : undefined
+  const mainBaseExternalPanel =
+    mainSavedPanel && !isPlaceholderExternalPanel(mainSavedPanel)
+      ? fillPanelStatsDefaults(mainSavedPanel)
+      : null
+
   return {
     isMb: input.isMb,
+    isFengYu: Boolean(input.isFengYu),
+    mainBaseExternalPanel,
+    // 词条库条目的「每档值」：不放这里就得在每个展示路径上各传一次，漏一处就分叉
+    valuePerCount: input.valuePerCount,
     agentBase: mainAgent?.basePanel ?? createEmptyAgentBasePanel(),
     wengineBaseAtk: mainWengine?.baseAtk ?? 0,
+    wengineBaseDef: mainWengine?.baseDef ?? 0,
     wengineAdvanced: mainWengine?.advancedStats ?? createEmptyWengineAdvancedStats(),
     driveDiscSelection: {
       twoPieceDriveDiscId: mainSlot.twoPieceDriveDiscId,
@@ -2213,41 +2818,44 @@ export function buildOptimalEvalContext(input: {
       driveDiscs: input.driveDiscs,
       skillContext: input.skillContext,
       buffSelection: input.buffSelection,
-      anomalySlotPanels: input.anomalySlotPanels,
+      activeSlotPanels: input.activeSlotPanels,
       convertSlotPanels: input.convertSlotPanels,
-      slotExternalPanels: Object.fromEntries(
-        input.teamSlots.flatMap((slot, index) => {
-          if (!slot.agentId) return []
-          // 主 C：由最优词条扫掠推导；队友：优先用手填局外，避免盖掉「导入」录入
-          if (index !== input.mainSlotIndex) {
-            const saved = input.anomalySlotPanels?.[slot.agentId]
+      skillTalentLevelsByAgent: input.skillTalentLevelsByAgent,
+      slotExternalPanels:
+        input.slotExternalPanels ??
+        Object.fromEntries(
+          input.teamSlots.flatMap((slot, index) => {
+            if (!slot.agentId) return []
+            // 局外面板统一以「角色配置」为准（导入录入写入的 activeSlotPanels）；
+            // 主 C 的候选词条叠加不在这里，见 computeExternalForEval。
+            const saved = input.activeSlotPanels?.[slot.agentId]
             if (saved && !isPlaceholderExternalPanel(saved)) {
               return [[index, fillPanelStatsDefaults(saved)]]
             }
-          }
-          return [
-            [
-              index,
-              computeExternalPanelFromTeamSlot({
-                slot,
-                agents: input.agents,
-                wengines: input.wengines,
-                driveDiscs: input.driveDiscs,
-                overrideAffix:
-                  index === input.mainSlotIndex
-                    ? {
-                        affixCounts: {
-                          ...createEmptyAffixCounts(),
-                          ...slot.affixCounts,
-                        },
-                        affixDriveDiscMainStats: input.driveDiscMainStats,
-                      }
-                    : undefined,
-              }),
-            ],
-          ]
-        }),
-      ),
+            return [
+              [
+                index,
+                computeExternalPanelFromTeamSlot({
+                  slot,
+                  agents: input.agents,
+                  wengines: input.wengines,
+                  driveDiscs: input.driveDiscs,
+                  overrideAffix:
+                    index === input.mainSlotIndex
+                      ? {
+                          // 词条数来自「词条导入」那份来源记录（老方案经 v4 迁移后同在一处）
+                          affixCounts: {
+                            ...createEmptyAffixCounts(),
+                            ...input.mainAffixCounts,
+                          },
+                          affixDriveDiscMainStats: input.driveDiscMainStats,
+                        }
+                      : undefined,
+                }),
+              ],
+            ]
+          }),
+        ),
       baseAnomalyControl: mainAgent?.basePanel.anomalyControl ?? 0,
       baseEnergyRegen: mainAgent?.basePanel.energyRegen ?? 0,
       environmentBuffs: input.environmentBuffs,

@@ -17,9 +17,12 @@ export interface BossInfoRecord {
   boss_image: string | null
   weakness: string | null
   resistance: string | null
+  resistance_high?: string | null
   crisis_base_hp?: number | null
   stagger_multiplier?: number | null
   stagger_time?: number | null
+  /** 异常条系数（初始异常积蓄 = 基础异常条 × 系数），缺省按 1 处理 */
+  anomaly_bar_coefficient?: number | null
   field_buff_name?: string | null
   field_buff_text?: string | null
   field_buff_image?: string | null
@@ -64,7 +67,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 
 export async function lookupBossInfo(bossName: string) {
   const query = new URLSearchParams({ boss_name: bossName.trim() })
-  const response = await fetch(`/api/zzz/zzz/boss-info/lookup?${query}`)
+  const response = await fetch(`/api/zzz/boss-info/lookup?${query}`)
   return parseResponse<BossInfoRecord | null>(response)
 }
 
@@ -72,7 +75,7 @@ export async function searchBossInfoNames(keyword: string, limit = 20) {
   const query = new URLSearchParams()
   if (keyword.trim()) query.set('q', keyword.trim())
   query.set('limit', String(limit))
-  const response = await fetch(`/api/zzz/zzz/boss-info/search?${query}`)
+  const response = await fetch(`/api/zzz/boss-info/search?${query}`)
   return parseResponse<string[]>(response)
 }
 
@@ -88,7 +91,7 @@ export async function fetchBossInfoList(params: {
   if (params.offset != null) query.set('offset', String(params.offset))
   if (params.catalog && params.catalog !== 'all') query.set('catalog', params.catalog)
   const suffix = query.toString()
-  const response = await fetch(`/api/zzz/zzz/boss-info/list${suffix ? `?${suffix}` : ''}`)
+  const response = await fetch(`/api/zzz/boss-info/list${suffix ? `?${suffix}` : ''}`)
   return parseResponse<BossInfoListResult>(response)
 }
 
@@ -96,7 +99,7 @@ export async function updateBossInfoRecord(
   id: number,
   payload: Partial<Omit<BossInfoRecord, 'id'>>,
 ) {
-  const response = await fetch(`/api/zzz/zzz/boss-info/${id}`, {
+  const response = await fetch(`/api/zzz/boss-info/${id}`, {
     method: 'PUT',
     headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
@@ -105,7 +108,7 @@ export async function updateBossInfoRecord(
 }
 
 export async function deleteBossInfoRecord(id: number) {
-  const response = await fetch(`/api/zzz/zzz/boss-info/${id}`, {
+  const response = await fetch(`/api/zzz/boss-info/${id}`, {
     method: 'DELETE',
     headers: withAdminAuthHeaders(),
   })
@@ -125,6 +128,7 @@ export interface BossInfoSnapshotRow {
   bossImage: string | null
   weakness: string | null
   resistance: string | null
+  resistanceHigh?: string | null
   crisisBaseHp: number | null
   staggerMultiplier: number
   staggerTime: number | null
@@ -172,7 +176,7 @@ export async function importBossInfoSnapshotFile(file: File, options?: { replace
   const query = new URLSearchParams()
   if (options?.replace) query.set('replace', '1')
   const qs = query.toString()
-  const response = await fetch(`/api/zzz/zzz/boss-info/import${qs ? `?${qs}` : ''}`, {
+  const response = await fetch(`/api/zzz/boss-info/import${qs ? `?${qs}` : ''}`, {
     method: 'POST',
     headers: withAdminAuthHeaders(),
     body: form,

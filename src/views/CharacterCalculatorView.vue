@@ -1,22 +1,32 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import BuffEffectBlocksDisplay from '@/components/calculator/BuffEffectBlocksDisplay.vue'
 import CalculatorAvatar from '@/components/calculator/CalculatorAvatar.vue'
 import DamageCalcPage from '@/components/calculator/DamageCalcPage.vue'
-import { DAMAGE_CALC_SECTIONS, DAMAGE_CALC_MODE_ITEMS, type DamageCalcNavItem } from '@/constants/damageCalcNav'
+import { DAMAGE_CALC_SECTIONS, type DamageCalcSectionId } from '@/constants/damageCalcNav'
+import {
+  CHARACTER_CALC_PAGES,
+  isCharacterCalcPage,
+  type CharacterCalcPage,
+} from '@/constants/sidebarPanelIds'
+import { getSidebarPanelLocation } from '@/router/sidebarPanelRoutes'
 import { useCalculatorBuffStore } from '@/stores/calculatorBuffs'
 import { useThemeStore } from '@/stores/theme'
+import { ensureAffixPresetLoaded } from '@/utils/affixPresetLoader'
 
 import '@/assets/calculatorLight.css'
 
-import { AGENT_ELEMENTS, AGENT_MINDSCAPE_RANKS, AGENT_ROLES, collectMindscapeRankBuffs, createEmptyBuffStatModifiers, createEmptySelfTeamBuffs, getMindscapeNote, getMindscapeRankOnlyBuffs, numericStatFieldLabel, REFINEMENT_RANKS, SUPPORT_STAT_OPTIONS, WENGINE_ADVANCED_STAT_FIELDS, WENGINE_RARITIES } from '@/utils/calculatorUi'
+import { AGENT_ELEMENTS, AGENT_MINDSCAPE_RANKS, AGENT_ROLES, collectMindscapeRankBuffs, createEmptySelfTeamBuffs, getMindscapeNote, getMindscapeRankOnlyBuffs, numericStatFieldLabel, REFINEMENT_RANKS, SUPPORT_STAT_OPTIONS, WENGINE_ADVANCED_STAT_FIELDS, WENGINE_RARITIES } from '@/utils/calculatorUi'
 
 defineOptions({ name: 'CharacterCalculatorView' })
 
-type CalcPage = 'damage' | 'role-buff' | 'wengine-buff' | 'bangboo-buff' | 'drive-disc-buff'
+type CalcPage = CharacterCalcPage
 type MindscapeBuffMode = 'current' | 'cumulative'
 
+const route = useRoute()
+const router = useRouter()
 const calculatorBuffStore = useCalculatorBuffStore()
 const themeStore = useThemeStore()
 const { mode: themeMode } = storeToRefs(themeStore)
@@ -25,6 +35,8 @@ const { agents, wengines: wengineDocs, bangboos: bangbooDocs, driveDiscs: driveD
 
 onMounted(() => {
   void calculatorBuffStore.ensureLoaded()
+  // 官方预设词条库走服务端（异步，不阻塞首屏；失败静默回落代码兜底）
+  void ensureAffixPresetLoaded()
 })
 
 watch(loaded, (ready) => {
@@ -51,10 +63,26 @@ const pageTitleMap: Record<CalcPage, string> = {
   'drive-disc-buff': '驱动盘增益',
 }
 
+const calcPages = CHARACTER_CALC_PAGES
+
+const pageLinks = computed(() => {
+  const basePath =
+    typeof route.meta.sidebarPanelBasePath === 'string' && route.meta.sidebarPanelBasePath
+      ? route.meta.sidebarPanelBasePath
+      : '/character-calculator'
+  return calcPages.map((p) => ({
+    id: p,
+    label: pageTitleMap[p],
+    to: getSidebarPanelLocation(basePath, p, route),
+  }))
+})
+
 const damageSubNav = DAMAGE_CALC_SECTIONS
-const damageCalcModeItems = DAMAGE_CALC_MODE_ITEMS
-const damageCalcModeHint = ref<'panel' | 'affix' | 'optimal'>('panel')
-const activePage = ref<CalcPage>('damage')
+const activePage = computed<CalcPage>(() => {
+  const fromRoute = route.meta.sidebarPanelId
+  if (isCharacterCalcPage(fromRoute)) return fromRoute
+  return 'damage'
+})
 const mobileNavOpen = ref(false)
 const damageCalcPageRef = ref<InstanceType<typeof DamageCalcPage> | null>(null)
 
@@ -73,22 +101,24 @@ onUnmounted(() => {
   document.body.style.overflow = ''
 })
 
-function selectPage(page: CalcPage) {
-  activePage.value = page
-  mobileNavOpen.value = false
+async function ensurePage(page: CalcPage): Promise<boolean> {
+  if (activePage.value === page) return false
+  const basePath =
+    typeof route.meta.sidebarPanelBasePath === 'string' && route.meta.sidebarPanelBasePath
+      ? route.meta.sidebarPanelBasePath
+      : '/character-calculator'
+  await router.push(getSidebarPanelLocation(basePath, page, route))
+  await nextTick()
+  return true
 }
 
-async function scrollToDamageSection(item: DamageCalcNavItem | { id: 'damage-calc-mode' }) {
-  const wasDamage = activePage.value === 'damage'
-  activePage.value = 'damage'
+async function scrollToDamageSection(sectionId: DamageCalcSectionId) {
+  const switched = await ensurePage('damage')
   mobileNavOpen.value = false
-  if ('calcMode' in item && item.calcMode) {
-    damageCalcModeHint.value = item.calcMode
-    damageCalcPageRef.value?.setCalcMode(item.calcMode)
-  }
+  // 侧栏项只做锚点滚动（「词条配比分析」已常驻，无模式切换）
   await nextTick()
-  if (!wasDamage) await nextTick()
-  await damageCalcPageRef.value?.scrollToSection(item.id)
+  if (switched) await nextTick()
+  await damageCalcPageRef.value?.scrollToSection(sectionId)
 }
 
 const roleDocSearch = ref('')
@@ -201,14 +231,6 @@ function toggleWengineDocRarityFilter(rarity: string) {
   wengineRarityFilter.value = wengineRarityFilter.value === rarity ? '' : rarity
 }
 
-const selectedBangbooRefinementBuffs = computed(() => {
-  if (!selectedBangbooDoc.value) return createEmptyBuffStatModifiers()
-  return (
-    selectedBangbooDoc.value.refinementMods[selectedBangbooRefinementRank.value - 1] ??
-    createEmptyBuffStatModifiers()
-  )
-})
-
 function selectAgentDoc(id: string) {
   selectedAgentDocId.value = id
   selectedMindscapeRank.value = 0
@@ -275,53 +297,31 @@ const filteredDriveDiscDocs = computed(() =>
         <span class="sidebar-title-bar" aria-hidden="true" />
       </h1>
       <nav class="sidebar-nav">
-        <div v-for="p in (['damage', 'role-buff', 'wengine-buff', 'bangboo-buff', 'drive-disc-buff'] as CalcPage[])" :key="p" class="sidebar-nav-group">
-          <button
+        <div v-for="page in pageLinks" :key="page.id" class="sidebar-nav-group">
+          <RouterLink
             class="sidebar-btn"
-            :class="{ active: activePage === p }"
-            type="button"
-            @click="selectPage(p)"
+            :class="{ active: activePage === page.id }"
+            :to="page.to"
+            @click="mobileNavOpen = false"
           >
             <span class="nav-btn-tick" aria-hidden="true" />
-            <span class="nav-btn-label">{{ pageTitleMap[p] }}</span>
-          </button>
+            <span class="nav-btn-label">{{ page.label }}</span>
+          </RouterLink>
           <div
-            v-if="p === 'damage'"
+            v-if="page.id === 'damage'"
             class="damage-subnav-wrap"
             :class="{ expanded: activePage === 'damage' }"
           >
             <div class="damage-subnav-inner">
               <nav class="damage-subnav" :aria-hidden="activePage !== 'damage'">
                 <template v-for="item in damageSubNav" :key="item.id">
-                  <div v-if="item.id === 'damage-calc-mode'" class="damage-calc-mode-group">
-                    <button
-                      type="button"
-                      class="damage-subnav-btn damage-calc-mode-label"
-                      :tabindex="activePage === 'damage' ? 0 : -1"
-                      @click="scrollToDamageSection({ id: 'damage-calc-mode' })"
-                    >
-                      计算方式
-                    </button>
-                    <div class="damage-calc-mode-children">
-                      <button
-                        v-for="modeItem in damageCalcModeItems"
-                        :key="modeItem.id"
-                        type="button"
-                        class="damage-subnav-btn"
-                        :class="{ active: damageCalcModeHint === modeItem.calcMode }"
-                        :tabindex="activePage === 'damage' ? 0 : -1"
-                        @click="scrollToDamageSection(modeItem)"
-                      >
-                        {{ modeItem.label }}
-                      </button>
-                    </div>
-                  </div>
+                  <!-- 侧栏项 = 锚点导航（纯滚动，无选中态）：「词条配比分析」即原「计算方式」组，
+                       2026-09-13 起区块与入口同名、直接锚定 #damage-panel。 -->
                   <button
-                    v-else
                     type="button"
                     class="damage-subnav-btn"
                     :tabindex="activePage === 'damage' ? 0 : -1"
-                    @click="scrollToDamageSection(item)"
+                    @click="scrollToDamageSection(item.id)"
                   >
                     {{ item.label }}
                   </button>
@@ -344,7 +344,6 @@ const filteredDriveDiscDocs = computed(() =>
       <DamageCalcPage
         v-show="activePage === 'damage'"
         ref="damageCalcPageRef"
-        @update:calc-mode="damageCalcModeHint = $event"
       />
 
       <article v-if="activePage === 'role-buff'" class="card">
@@ -791,7 +790,9 @@ const filteredDriveDiscDocs = computed(() =>
   font-size: 0.9rem;
   font-weight: 600;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
+  box-sizing: border-box;
   box-shadow:
     inset 0 1px 2px rgba(255, 255, 255, 0.14),
     inset 0 0 0 2px #2e2e2e,
@@ -920,18 +921,7 @@ const filteredDriveDiscDocs = computed(() =>
   background: rgba(251, 254, 0, 0.12);
 }
 
-.damage-calc-mode-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  margin-top: 0.1rem;
-}
-
-.damage-calc-mode-label {
-  color: rgba(245, 245, 240, 0.7);
-  font-weight: 600;
-}
-
+/* 【临时冻结 · 2026-09-11】「面板导入 / 词条导入」停用态：保留可见，但明确不可点 */
 .damage-calc-mode-children {
   display: flex;
   flex-direction: column;

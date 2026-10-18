@@ -31,6 +31,8 @@ function normalizeSkill(raw: Record<string, unknown>): Skill | null {
     ? raw.skillTypes.map((item) => String(item) as SkillTypeId)
     : []
   const anchor = raw.buffAnchorId
+  const ownerGroupId =
+    raw.ownerGroupId == null || raw.ownerGroupId === '' ? null : String(raw.ownerGroupId)
   return {
     id,
     name: String(raw.name ?? '').trim() || '未命名招式',
@@ -46,7 +48,24 @@ function normalizeSkill(raw: Record<string, unknown>): Skill | null {
     settlementMult: Number.isFinite(Number(raw.settlementMult))
       ? Number(raw.settlementMult)
       : undefined,
+    multSource: raw.multSource === 'nanoka' ? 'nanoka' : null,
+    damagePercentage: Number.isFinite(Number(raw.damagePercentage))
+      ? Number(raw.damagePercentage)
+      : undefined,
+    damagePercentageGrowth: Number.isFinite(Number(raw.damagePercentageGrowth))
+      ? Number(raw.damagePercentageGrowth)
+      : undefined,
+    radianceTalentKey:
+      raw.radianceTalentKey === 'basic' ||
+      raw.radianceTalentKey === 'dodge' ||
+      raw.radianceTalentKey === 'assist' ||
+      raw.radianceTalentKey === 'special' ||
+      raw.radianceTalentKey === 'chainUltimate'
+        ? raw.radianceTalentKey
+        : null,
     element: raw.element == null || raw.element === '' ? '' : String(raw.element),
+    ownerGroupId,
+    note: typeof raw.note === 'string' ? raw.note.trim() : '',
   }
 }
 

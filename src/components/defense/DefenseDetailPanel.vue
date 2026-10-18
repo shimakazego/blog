@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import type { HpChartPoint } from '@/api/crisisAssault'
 import { fetchDefenseSeasons } from '@/api/defense'
-import type { DefenseEnemy, DefenseSeason, DefenseVariant, DefenseZoneBuffRecord } from '@/types/defense'
+import type { DefenseEnemy, DefenseSeason, DefenseVariant } from '@/types/defense'
 import type { AdminBuffSlotContext, AdminMonsterSlotContext } from '@/types/admin'
 import { decodeDefenseBossId } from '@/utils/defenseId'
 import {
@@ -12,9 +12,23 @@ import {
   findDefenseRoomHpComparison,
   formatDefenseRoomHpTitle,
 } from '@/utils/defenseHp'
-import { findDefenseSeasonIndexFromChartPoint } from '@/utils/defenseCompare'
+import {
+  findDefenseSeasonIndexFromChartPoint,
+  hasDefenseMonsterExistedByMultiplierVersion,
+  resolveDefenseMonsterDefaultLevel,
+} from '@/utils/defenseCompare'
 import { formatHpDelta } from '@/utils/gameData'
 import { createRequestEpoch } from '@/utils/requestEpoch'
+import {
+  buildQueryWithValues,
+  findIndexBySelectionKey,
+  PANEL_QUERY_KEYS,
+  periodSelectionKey,
+  readSingleQueryValue,
+} from '@/utils/panelUrlState'
+import ElementTraitIcons from '@/components/shared/ElementTraitIcons.vue'
+import BuffRichText from '@/components/calculator/BuffRichText.vue'
+import DefenseMonsterDetailModal from '@/components/defense/DefenseMonsterDetailModal.vue'
 
 const props = defineProps<{
   embedded?: boolean
@@ -33,6 +47,7 @@ const emit = defineEmits<{
 }>()
 
 const route = useRoute()
+const router = useRouter()
 
 const defenseVariant = computed<DefenseVariant>(() =>
   props.variantOverride ?? (route.meta.defenseVariant === 'new' ? 'new' : 'old'),
@@ -54,27 +69,29 @@ function defaultPublicSeasonIndex(list: DefenseSeason[]): number {
   return list.length - 1
 }
 
-function seasonSelectionKey(season: DefenseSeason) {
-  const phaseNum = season.phase.replace(/\D/g, '')
-  return `${season.version}-${phaseNum || season.phase}`
-}
-
 async function loadSeasons() {
   const token = seasonsLoadEpoch.next()
   loading.value = true
   loadError.value = ''
   const previousKey =
-    props.adminMode && currentSeason.value ? seasonSelectionKey(currentSeason.value) : null
+    props.adminMode && currentSeason.value ? periodSelectionKey(currentSeason.value) : null
   const previousRoomHpIndex = props.adminMode ? roomHpIndex.value : 0
   try {
     const data = await fetchDefenseSeasons(defenseVariant.value)
     if (!seasonsLoadEpoch.isCurrent(token)) return
     seasons.value = data
+    // 深链优先：URL 明确指定了某一期就用它（管理端不参与 URL 同步）
+    const queryIndex = props.adminMode
+      ? -1
+      : findIndexBySelectionKey(data, readSingleQueryValue(route.query, PANEL_QUERY_KEYS.phase))
     if (props.chartPoint) {
       applyChartPointSelection()
       roomHpIndex.value = 0
+    } else if (queryIndex >= 0) {
+      currentIndex.value = queryIndex
+      roomHpIndex.value = 0
     } else if (previousKey) {
-      const restoredIndex = data.findIndex((item) => seasonSelectionKey(item) === previousKey)
+      const restoredIndex = data.findIndex((item) => periodSelectionKey(item) === previousKey)
       currentIndex.value = restoredIndex >= 0 ? restoredIndex : defaultPublicSeasonIndex(data)
       const options = buildDefenseRoomHpOptions(data[currentIndex.value] ?? data[0]!)
       roomHpIndex.value = options.length
@@ -116,6 +133,41 @@ watch(
 
 const currentSeason = computed(() => seasons.value[currentIndex.value])
 
+/**
+ * 期 ↔ URL（`?phase=<version>-<期数>`）。
+ *
+ * 管理端不参与：那边由 adminMode 的还原逻辑负责，写 URL 会污染后台地址。
+ * 用 replace 而非 push：本期/上期连点时不往历史里堆条目。
+ */
+function syncSeasonToQuery(season: DefenseSeason | undefined) {
+  if (!season || props.adminMode) return
+  const next = periodSelectionKey(season)
+  if (readSingleQueryValue(route.query, PANEL_QUERY_KEYS.phase) === next) return
+  void router.replace({
+    path: route.path,
+    query: buildQueryWithValues(route.query, { [PANEL_QUERY_KEYS.phase]: next }),
+    hash: route.hash,
+  })
+}
+
+// 选中项变化（含列表刚加载完的默认/还原选中）→ 写入 URL
+watch([currentIndex, seasons], () => {
+  syncSeasonToQuery(currentSeason.value)
+})
+
+// URL 变化（浏览器前进后退 / 直接改地址）→ 同步回面板状态
+watch(
+  () => route.query[PANEL_QUERY_KEYS.phase],
+  () => {
+    if (props.adminMode) return
+    const index = findIndexBySelectionKey(
+      seasons.value,
+      readSingleQueryValue(route.query, PANEL_QUERY_KEYS.phase),
+    )
+    if (index >= 0 && index !== currentIndex.value) currentIndex.value = index
+  },
+)
+
 const roomHpOptions = computed(() => {
   if (!currentSeason.value) return []
   return buildDefenseRoomHpOptions(currentSeason.value)
@@ -153,6 +205,73 @@ function getEnemyHpComparison(enemy: DefenseEnemy) {
   return findDefenseEnemyHpComparison(seasons.value, currentIndex.value, enemy)
 }
 
+/** 怪物详情弹窗：仅非管理端可点开，且只接线怪物级卡片（房间级卡片不参与） */
+const monsterDetailOpen = ref(false)
+const monsterDetailEnemy = ref<DefenseEnemy | null>(null)
+/** 打开时记录的定位串（房间 + 波次），与当前期数拼成弹窗副标题 */
+const monsterDetailSlotLabel = ref('')
+/** 打开时记录的防线（stage）：弹窗据此在 boss_info 查无记录时补默认等级 */
+const monsterDetailFrontierStage = ref<number | null>(null)
+
+function canOpenMonsterDetail(enemy: DefenseEnemy) {
+  return !props.adminMode && Boolean(enemy.name)
+}
+
+function openMonsterDetail(
+  enemy: DefenseEnemy,
+  frontier: { id: string },
+  roomLabel: string,
+  waveLabel: string,
+) {
+  if (!canOpenMonsterDetail(enemy)) return
+  monsterDetailEnemy.value = enemy
+  monsterDetailFrontierStage.value = resolveFrontierStage(frontier)
+  monsterDetailSlotLabel.value = [roomLabel, waveLabel].filter(Boolean).join(' · ')
+  monsterDetailOpen.value = true
+}
+
+function closeMonsterDetail() {
+  monsterDetailOpen.value = false
+  monsterDetailEnemy.value = null
+  monsterDetailFrontierStage.value = null
+}
+
+function onMonsterDetailKeydown(
+  event: KeyboardEvent,
+  enemy: DefenseEnemy,
+  frontier: { id: string },
+  roomLabel: string,
+  waveLabel: string,
+) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  openMonsterDetail(enemy, frontier, roomLabel, waveLabel)
+}
+
+/** 与怪物卡片同一口径的往期血量对比，由弹窗用于血量行的膨胀与增量 */
+const monsterDetailHpComparison = computed(() =>
+  monsterDetailEnemy.value ? getEnemyHpComparison(monsterDetailEnemy.value) : null,
+)
+
+const monsterDetailPhaseLabel = computed(() => {
+  const season = currentSeason.value
+  const slot = monsterDetailSlotLabel.value
+  if (!season) return ''
+  return `${season.version} ${season.phase}${slot ? ` · ${slot}` : ''}`
+})
+
+/**
+ * 该怪物是否在 2.1（含）之前就已存在 —— 版本系数的第二个条件（与「当期 ≥ 2.1」同时成立才乘）。
+ * 首次出现不晚于 2.1 即为 true（含 2.1 才出的新怪物），2.2 起才出的为 false。
+ * 按怪物名扫全量赛季（含当前赛季；当期 < 2.1 时表本就不会乘，故不影响结果）。
+ */
+const monsterDetailBossExistedByMultiplierVersion = computed(() =>
+  hasDefenseMonsterExistedByMultiplierVersion(
+    seasons.value,
+    monsterDetailEnemy.value?.name,
+  ),
+)
+
 function prevRoomHp() {
   if (roomHpIndex.value > 0) roomHpIndex.value--
 }
@@ -184,14 +303,6 @@ function filterMeaningfulResistanceTraits(items: string[]) {
     const trimmed = item.trim()
     return trimmed && trimmed !== '无'
   })
-}
-
-function formatWeaknessText(items: string[]) {
-  return items.filter(Boolean).join('、')
-}
-
-function formatResistanceTraitText(items: string[]) {
-  return filterMeaningfulResistanceTraits(items).join('、')
 }
 
 function parseDefensePhaseNumber(phaseLabel: string) {
@@ -241,6 +352,8 @@ function buildDefenseMonsterContext(
     monsterSubType: 1,
     count: 1,
   }
+  // `DefenseEnemy` 不带等级，槽位预填只能按防线规则推导（第五防线 70，其余防线 1）
+  const level = String(resolveDefenseMonsterDefaultLevel(slot.stage, null))
   if (!enemy?.id) return base
   try {
     const decoded = decodeDefenseBossId(enemy.id)
@@ -254,9 +367,10 @@ function buildDefenseMonsterContext(
       bossName: enemy.name,
       hp: enemy.hpValue ?? enemy.hp,
       defense: enemy.defense,
-      level: '1',
+      level,
       weakness: enemy.weakness ?? '',
       resistance: enemy.resistance ?? '',
+      resistanceHigh: enemy.resistanceHigh ?? '',
       bossImage: enemy.imageUrl ?? null,
     }
   } catch {
@@ -267,9 +381,10 @@ function buildDefenseMonsterContext(
       bossName: enemy.name,
       hp: enemy.hpValue ?? enemy.hp,
       defense: enemy.defense,
-      level: '1',
+      level,
       weakness: enemy.weakness ?? '',
       resistance: enemy.resistance ?? '',
+      resistanceHigh: enemy.resistanceHigh ?? '',
       bossImage: enemy.imageUrl ?? null,
     }
   }
@@ -307,6 +422,8 @@ function buildDefenseMonsterContextFromSlot(
     monsterCategory: 'boss',
     monsterSubType: 1,
     count: 1,
+    // 与「添加 / 编辑怪物」同一口径：等级由防线推导，避免新增防线 / 房间 / 波次时预填回 1
+    level: String(resolveDefenseMonsterDefaultLevel(slot.stage, null)),
   }
 }
 
@@ -461,7 +578,7 @@ function onAdminEditRoomBuff(
 ) {
   const slot = resolveDefenseRoomParts(frontier, room)
   if (!slot) return
-  const buffIndex = room.roomBuff.buffIndex ?? 3
+  const buffIndex = room.roomBuff.buffIndex ?? 1
   const ctx = buildDefenseBuffContext(
     slot,
     buffIndex,
@@ -475,38 +592,6 @@ function onAdminEditRoomBuff(
     },
     room.roomBuff.recordId ? 'edit' : 'create',
   )
-  if (ctx) emit('admin-buff', ctx)
-}
-
-function onAdminEditZoneBuff(
-  frontier: { id: string },
-  room: { id: string },
-  record: DefenseZoneBuffRecord,
-) {
-  const slot = resolveDefenseRoomParts(frontier, room)
-  if (!slot) return
-  const ctx = buildDefenseBuffContext(
-    slot,
-    record.buffIndex,
-    {
-      recordId: record.recordId,
-      buffName: record.buffName,
-      buffText: record.buffText,
-      effectBlocks: record.effectBlocks,
-    },
-    'edit',
-  )
-  if (ctx) emit('admin-buff', ctx)
-}
-
-function onAdminAddZoneBuff(
-  frontier: { id: string },
-  room: { id: string },
-  buffIndex: number,
-) {
-  const slot = resolveDefenseRoomParts(frontier, room)
-  if (!slot) return
-  const ctx = buildDefenseBuffContext(slot, buffIndex, null, 'create')
   if (ctx) emit('admin-buff', ctx)
 }
 
@@ -739,60 +824,6 @@ function formatEnemyResistance(value?: string) {
                 </div>
               </header>
 
-              <div
-                v-if="adminMode || room.zoneBuffs.length || (room.zoneBuffRecords?.length ?? 0)"
-                class="room-zone-buff-section"
-              >
-                <div class="block-label-row">
-                  <p class="block-label">区域 Buff</p>
-                  <div v-if="adminMode" class="enemy-admin-bar enemy-admin-bar--inline">
-                    <button
-                      type="button"
-                      class="enemy-admin-btn enemy-admin-btn--primary"
-                      @click="onAdminAddZoneBuff(frontier, room, 1)"
-                    >
-                      + Buff 1
-                    </button>
-                    <button
-                      type="button"
-                      class="enemy-admin-btn enemy-admin-btn--primary"
-                      @click="onAdminAddZoneBuff(frontier, room, 2)"
-                    >
-                      + Buff 2
-                    </button>
-                  </div>
-                </div>
-                <ul v-if="room.zoneBuffs.length" class="zone-buff-lines">
-                  <li v-for="(line, index) in room.zoneBuffs" :key="index">{{ line }}</li>
-                </ul>
-                <div
-                  v-if="adminMode && room.zoneBuffRecords?.length"
-                  class="zone-buff-records"
-                >
-                  <div
-                    v-for="record in room.zoneBuffRecords"
-                    :key="record.recordId"
-                    class="zone-buff-record"
-                  >
-                    <span>序号 {{ record.buffIndex }}</span>
-                    <button
-                      type="button"
-                      class="enemy-admin-btn"
-                      @click="onAdminEditZoneBuff(frontier, room, record)"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      class="enemy-admin-btn enemy-admin-btn--danger"
-                      @click="onAdminRemovePeriodBuff(record.recordId, `区域 Buff ${record.buffIndex}`)"
-                    >
-                      从本期移除
-                    </button>
-                  </div>
-                </div>
-              </div>
-
               <div class="room-buff-section">
                 <div class="block-label-row">
                   <p class="block-label">关卡增益</p>
@@ -831,7 +862,9 @@ function formatEnemyResistance(value?: string) {
                     {{ room.roomBuff.name }}
                   </h4>
                   <ul v-if="room.roomBuff.lines.length" class="buff-lines">
-                    <li v-for="(line, index) in room.roomBuff.lines" :key="index">{{ line }}</li>
+                    <li v-for="(line, index) in room.roomBuff.lines" :key="index">
+                      <BuffRichText :text="line" />
+                    </li>
                   </ul>
                 </div>
                 <p v-else-if="adminMode" class="room-buff-empty">暂无关卡增益</p>
@@ -856,23 +889,25 @@ function formatEnemyResistance(value?: string) {
                       + 添加波次
                     </button>
                   </div>
-                  <div
-                    v-if="
-                      battleRoom.weakness.length ||
-                      filterMeaningfulResistanceTraits(battleRoom.resistance ?? []).length
-                    "
-                    class="trait-row"
-                  >
-                    <p v-if="battleRoom.weakness.length" class="trait-line">
-                      <span class="trait-label">弱点</span>
-                      {{ formatWeaknessText(battleRoom.weakness) }}
+                  <div class="trait-row">
+                    <p class="trait-line">
+                      <ElementTraitIcons
+                        :value="battleRoom.weakness"
+                        label="弱点"
+                        variant="weak"
+                        show-percent
+                        empty-text="无"
+                      />
                     </p>
-                    <p
-                      v-if="filterMeaningfulResistanceTraits(battleRoom.resistance ?? []).length"
-                      class="trait-line"
-                    >
-                      <span class="trait-label">抗性</span>
-                      {{ formatResistanceTraitText(battleRoom.resistance ?? []) }}
+                    <p class="trait-line">
+                      <ElementTraitIcons
+                        :value="filterMeaningfulResistanceTraits(battleRoom.resistance ?? [])"
+                        :high-value="filterMeaningfulResistanceTraits(battleRoom.resistanceHigh ?? [])"
+                        label="抗性"
+                        variant="resist"
+                        show-percent
+                        empty-text="无"
+                      />
                     </p>
                   </div>
                 </header>
@@ -891,7 +926,13 @@ function formatEnemyResistance(value?: string) {
                       :class="{
                         'enemy-chip--boss': enemy.isBoss,
                         'enemy-chip--admin': adminMode,
+                        'enemy-chip--clickable': canOpenMonsterDetail(enemy),
                       }"
+                      :role="canOpenMonsterDetail(enemy) ? 'button' : undefined"
+                      :aria-label="canOpenMonsterDetail(enemy) ? `查看 ${enemy.name} 详情` : undefined"
+                      :tabindex="canOpenMonsterDetail(enemy) ? 0 : undefined"
+                      @click="openMonsterDetail(enemy, frontier, room.label, wave.label)"
+                      @keydown="onMonsterDetailKeydown($event, enemy, frontier, room.label, wave.label)"
                     >
                       <div v-if="adminMode" class="enemy-admin-bar">
                         <button
@@ -944,14 +985,27 @@ function formatEnemyResistance(value?: string) {
                           </p>
                         </div>
                         <p v-if="enemy.defense !== undefined" class="enemy-chip-def">防御 {{ enemy.defense }}</p>
-                        <p v-if="enemy.weakness" class="enemy-chip-trait">
-                          <span class="trait-label">弱点</span>{{ enemy.weakness }}
-                        </p>
-                        <p v-if="formatEnemyResistance(enemy.resistance)" class="enemy-chip-trait">
-                          <span class="trait-label">抗性</span>{{ formatEnemyResistance(enemy.resistance) }}
-                        </p>
                         <p v-if="enemy.staggerTime != null" class="enemy-chip-trait">
                           <span class="trait-label">失衡时间</span>{{ enemy.staggerTime }} 秒
+                        </p>
+                        <p class="enemy-chip-trait">
+                          <ElementTraitIcons
+                            :value="enemy.weakness"
+                            label="弱点"
+                            variant="weak"
+                            show-percent
+                            empty-text="无"
+                          />
+                        </p>
+                        <p class="enemy-chip-trait">
+                          <ElementTraitIcons
+                            :value="formatEnemyResistance(enemy.resistance)"
+                            :high-value="enemy.resistanceHigh"
+                            label="抗性"
+                            variant="resist"
+                            show-percent
+                            empty-text="无"
+                          />
                         </p>
                       </div>
                     </article>
@@ -982,6 +1036,18 @@ function formatEnemyResistance(value?: string) {
       @click="onNavZoneClick('next')"
       @keydown.enter="onNavZoneClick('next')"
       @keydown.space.prevent="onNavZoneClick('next')"
+    />
+
+    <DefenseMonsterDetailModal
+      :open="monsterDetailOpen"
+      :enemy="monsterDetailEnemy"
+      :variant="defenseVariant"
+      :phase-label="monsterDetailPhaseLabel"
+      :version="currentSeason?.version ?? null"
+      :boss-existed-by-multiplier-version="monsterDetailBossExistedByMultiplierVersion"
+      :hp-comparison="monsterDetailHpComparison"
+      :stage="monsterDetailFrontierStage"
+      @close="closeMonsterDetail"
     />
   </div>
 </template>
@@ -1642,6 +1708,15 @@ function formatEnemyResistance(value?: string) {
   background: color-mix(in srgb, #e8a838 8%, var(--color-background-soft));
 }
 
+.enemy-chip--clickable {
+  cursor: pointer;
+}
+
+.enemy-chip--clickable:focus-visible {
+  outline: 2px solid var(--color-border);
+  outline-offset: 2px;
+}
+
 .enemy-chip-image {
   width: 52px;
   height: 64px;
@@ -2021,32 +2096,6 @@ function formatEnemyResistance(value?: string) {
 
 .enemy-admin-bar--inline {
   margin-bottom: 0;
-}
-
-.room-zone-buff-section {
-  margin-bottom: 0.65rem;
-}
-
-.zone-buff-lines {
-  margin: 0;
-  padding-left: 1.1rem;
-  font-size: 0.78rem;
-  color: var(--color-text);
-}
-
-.zone-buff-records {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin-top: 0.45rem;
-}
-
-.zone-buff-record {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.75rem;
-  color: #9aa3b0;
 }
 
 .room-buff-empty {

@@ -6,6 +6,7 @@ import type {
 } from '@/types/calculator'
 import type { PanelStats } from '@/types/calculatorPanel'
 import { collectEffectsFromPack, getEffectSkillTargets } from '@/utils/buffEffect'
+import { hasBuffScope } from '@/utils/buffScope'
 import {
   defaultAnomalyMultByElement,
   defaultDisorderStats,
@@ -18,8 +19,10 @@ export interface ResolvedSkillMults {
   /** 决算倍率区（直伤大类下的独立伤害分量） */
   settlementDmgMultZone: number
   anomalyReleaseMultZone: number
-  /** 紊乱倍率区（不含持续时间补偿；与 disorderZone 中基础部分一致） */
-  disorderMultZone: number
+  /** 紊乱基础倍率分量（不含倍率修正、不含持续时间补偿） */
+  disorderBaseMultRatio: number
+  /** 紊乱倍率修正（小类修正 × 面板修正），直接乘在紊乱倍率区上 */
+  disorderMultFactor: number
   hasPolarDisorder: boolean
 }
 
@@ -94,7 +97,7 @@ export function resolveAnchorSkillBoundMultPercent(options: {
   for (const pack of agent.mindscapeBuffs ?? []) {
     for (const effect of collectEffectsFromPack(pack)) {
       if (effect.stat !== stat) continue
-      if (effect.scope !== 'skill') continue
+      if (!hasBuffScope(effect.scope, 'skill')) continue
       const value = Number(effect.value)
       if (unsetSkillMult(value)) continue
       const targets = getEffectSkillTargets(effect)
@@ -155,25 +158,6 @@ export function resolveInherentSkillMultPercent(options: {
     }
     default:
       return null
-  }
-}
-
-export function skillMultKindLabel(damageType: SkillDamageType): string {
-  switch (damageType) {
-    case 'direct':
-      return '直伤倍率'
-    case 'anomaly':
-      return '异常倍率'
-    case 'anomalyRelease':
-      return '异放倍率'
-    case 'disorder':
-      return '紊乱倍率'
-    case 'turbulence':
-      return '乱流倍率'
-    case 'radiance':
-      return '耀变倍率'
-    default:
-      return '倍率'
   }
 }
 
@@ -295,13 +279,11 @@ export function resolveSkillMults(
         panelReleaseFactor
 
   const panelDisorderFactor = readFactor(panel.disorderBaseMultFactor)
-  const disorderMultZone = unsetSkillMult(sub.disorderMult)
-    ? Math.max(0, panel.disorderBaseMult / 100) *
-        sub.disorderMultFactor *
-        panelDisorderFactor
-    : Math.max(0, sub.disorderMult / 100) *
-        sub.disorderMultFactor *
-        panelDisorderFactor
+  const disorderBaseMultRatio = Math.max(
+    0,
+    (unsetSkillMult(sub.disorderMult) ? panel.disorderBaseMult : sub.disorderMult) / 100,
+  )
+  const disorderMultFactor = sub.disorderMultFactor * panelDisorderFactor
 
   const hasPolarDisorder =
     !unsetSkillMult(sub.disorderMult) ||
@@ -311,7 +293,8 @@ export function resolveSkillMults(
     directDmgMultZone,
     settlementDmgMultZone,
     anomalyReleaseMultZone,
-    disorderMultZone,
+    disorderBaseMultRatio,
+    disorderMultFactor,
     hasPolarDisorder,
   }
 }

@@ -10,6 +10,7 @@ import {
   mapBossRecordToDamageEnemyInput,
 } from '@/utils/enemyInputFromBoss'
 import { hasBossDisplayImage, resolveAssetUrl } from '@/utils/gameData'
+import { formatTraitTextWithPercent } from '@/utils/elementIcons'
 
 type PickerTab = 'catalog' | 'record'
 type RecordScheme = 'crisis' | 'defense'
@@ -354,8 +355,8 @@ function close() {
               />
               <span class="boss-name">{{ item.boss_name }}</span>
               <span class="boss-meta">防御 {{ item.defense }} · 失衡 {{ item.stagger_multiplier ?? 1.5 }}</span>
-              <span v-if="item.weakness" class="boss-trait weak">弱 {{ item.weakness }}</span>
-              <span v-if="item.resistance" class="boss-trait res">抗 {{ item.resistance }}</span>
+              <span v-if="item.weakness" class="boss-trait weak">弱 {{ formatTraitTextWithPercent(item.weakness) }}</span>
+              <span v-if="item.resistance" class="boss-trait res">抗 {{ formatTraitTextWithPercent(item.resistance, item.resistance_high) }}</span>
             </button>
           </div>
         </div>

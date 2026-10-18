@@ -52,6 +52,49 @@ export function clearAdminAuthenticated() {
   setAdminAuthenticated(false)
 }
 
+/**
+ * 管理接口返回 401 / ADMIN_AUTH_REQUIRED 时调用：立刻清掉本地登录态。
+ * 不清的话路由守卫还认本地标记，用户点了「去登录」也会被弹回管理页空转。
+ */
+export function handleAdminSessionExpired() {
+  writeStorage(ADMIN_AUTH_STORAGE_KEY, null)
+  writeStorage(ADMIN_TOKEN_STORAGE_KEY, null)
+  lastSessionCheckAt = 0
+  lastSessionCheckValid = false
+}
+
+const ADMIN_SESSION_CHECK_CACHE_MS = 2 * 60 * 1000
+let lastSessionCheckAt = 0
+let lastSessionCheckValid = false
+
+/**
+ * 进管理页前向服务器核验登录态（结果内存缓存 2 分钟，避免每次导航都发请求）。
+ * 401 → 清本地态并返回 false；网络错误 / 5xx 不清态（沿用上次结果，没核验过则放行），
+ * 不能把用户因断网或服务器抖动登出。
+ */
+export async function verifyAdminSessionWithServer(): Promise<boolean> {
+  if (!isAdminAuthenticated()) return false
+  if (Date.now() - lastSessionCheckAt < ADMIN_SESSION_CHECK_CACHE_MS) {
+    return lastSessionCheckValid
+  }
+  let response: Response
+  try {
+    response = await fetch('/api/zzz/admin/session', { headers: withAdminAuthHeaders() })
+  } catch {
+    return lastSessionCheckAt > 0 ? lastSessionCheckValid : true
+  }
+  if (response.ok) {
+    lastSessionCheckAt = Date.now()
+    lastSessionCheckValid = true
+    return true
+  }
+  if (response.status === 401) {
+    handleAdminSessionExpired()
+    return false
+  }
+  return lastSessionCheckAt > 0 ? lastSessionCheckValid : true
+}
+
 /** 管理端写请求统一附加 Authorization + X-Admin-Token */
 export function withAdminAuthHeaders(
   headers: HeadersInit | undefined = undefined,

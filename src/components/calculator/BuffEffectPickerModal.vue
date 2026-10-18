@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import CalculatorAvatar from '@/components/calculator/CalculatorAvatar.vue'
+import BuffRichText from '@/components/calculator/BuffRichText.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import type { CharacterAttrKey, SkillSubcategory } from '@/types/calculator'
 import type {
@@ -9,6 +10,7 @@ import type {
   PanelSourceValues,
 } from '@/utils/panelBuffCalc'
 import {
+  availableBuffGroupTabs,
   getBuffEffectConvertInput,
   getBuffEffectEnabled,
   getBuffEffectStacks,
@@ -21,10 +23,15 @@ import {
   setBuffEffectStacks,
   isTeamBuffApplyTarget,
 } from '@/utils/panelBuffCalc'
-import { formatBuffEffectResultText, formatApplyProfessionLabel, resolveConvertValue } from '@/utils/buffEffect'
+import { formatBuffEffectResultText, formatApplySituationLabel, resolveConvertValue } from '@/utils/buffEffect'
+import {
+  isSkillConvertFromKey,
+  SKILL_CONVERT_FROM_TO_TALENT_KEY,
+  type SkillTalentLevels,
+} from '@/utils/skillTalentLevels'
 import { formatCalcSigned } from '@/utils/calcNumberFormat'
 import { buffStatFieldLabel, BUFF_STAT_FIELDS } from '@/utils/calculatorUi'
-import { CHARACTER_ATTR_OPTIONS } from '@/types/calculator'
+import { CONVERT_FROM_OPTIONS } from '@/types/calculator'
 
 const props = defineProps<{
   effects: CollectedEffect[]
@@ -41,6 +48,8 @@ const props = defineProps<{
   teamSlots?: Array<{ agentId?: string | null }>
   /** 代理人列表（读取 profession） */
   agents?: Array<{ id: string; profession?: string | null }>
+  /** 技能等级转模来源：按角色 id 的五大类技能等级 */
+  skillTalentLevelsByAgent?: Record<string, Partial<SkillTalentLevels> | null>
 }>()
 
 function panelSourceValuesForEffect(item: CollectedEffect): PanelSourceValues | undefined {
@@ -59,23 +68,6 @@ const search = ref('')
 const activeGroup = ref('全部')
 const showConvertOverride = ref<Record<string, boolean>>({})
 
-const groupOrder = [
-  '全部',
-  '自身',
-  '自身音擎',
-  '自身驱动盘',
-  '全队（含自身）',
-  '全队音擎',
-  '队友',
-  '队友音擎',
-  '队友驱动盘',
-  '邦布',
-  '危局 Buff',
-  'Boss 场地 Buff',
-  '防线 Buff',
-  '临界 Buff',
-]
-
 interface BuffCardGroup {
   key: string
   providerName: string
@@ -86,11 +78,12 @@ interface BuffCardGroup {
   items: CollectedEffect[]
 }
 
-const availableGroups = computed(() => {
-  const set = new Set(props.effects.map((item) => item.group))
-  for (const group of props.forceGroups ?? []) set.add(group)
-  return groupOrder.filter((g) => g === '全部' || set.has(g))
-})
+const availableGroups = computed(() =>
+  availableBuffGroupTabs(
+    props.effects.map((item) => item.group),
+    props.forceGroups,
+  ),
+)
 
 watch(availableGroups, (groups) => {
   if (!groups.includes(activeGroup.value)) activeGroup.value = '全部'
@@ -102,7 +95,7 @@ function statLabel(stat: string) {
 }
 
 function attrLabel(from: string) {
-  return CHARACTER_ATTR_OPTIONS.find((item) => item.id === from)?.label ?? from
+  return CONVERT_FROM_OPTIONS.find((item) => item.id === from)?.label ?? from
 }
 
 function panelSourceLabel(item: CollectedEffect) {
@@ -177,6 +170,11 @@ function convertLiveBase(item: CollectedEffect) {
   if (convert.defaultBase != null && Number.isFinite(convert.defaultBase)) {
     return convert.defaultBase
   }
+  // 技能等级转模：取来源角色的对应大类技能等级
+  if (isSkillConvertFromKey(convert.from)) {
+    const levels = skillTalentLevelsForItem(item)
+    return levels?.[SKILL_CONVERT_FROM_TO_TALENT_KEY[convert.from]] ?? 0
+  }
   const source = convert.panelSource ?? 'external'
   const panelSources = panelSourceValuesForEffect(item)
   const map =
@@ -186,6 +184,17 @@ function convertLiveBase(item: CollectedEffect) {
     props.attrDefaults ??
     {}
   return map[convert.from] ?? props.attrDefaults?.[convert.from] ?? 0
+}
+
+/** 技能等级转模的来源角色等级表：按效果来源槽位取对应角色的五大类等级 */
+function skillTalentLevelsForItem(
+  item: CollectedEffect,
+): Partial<SkillTalentLevels> | null {
+  const convert = item.effect.convert
+  if (!convert || !isSkillConvertFromKey(convert.from)) return null
+  const slotIndex = parseSourceKeySlotIndex(item.sourceKey)
+  const agentId = slotIndex != null ? props.teamSlots?.[slotIndex]?.agentId : undefined
+  return agentId ? (props.skillTalentLevelsByAgent?.[agentId] ?? null) : null
 }
 
 function hasConvertOverride(item: CollectedEffect) {
@@ -263,6 +272,8 @@ function convertResult(item: CollectedEffect) {
     props.attrDefaults ?? {},
     override,
     panelSourceValuesForEffect(item),
+    // 技能等级转模来源等级表（此前缺失导致等级转模显示 0）
+    skillTalentLevelsForItem(item),
   )
 }
 
@@ -271,10 +282,7 @@ function blockNameText(item: CollectedEffect) {
 }
 
 function situationLabel(item: CollectedEffect) {
-  const situation = item.effect.applySituation ?? 'global'
-  if (situation === 'stagger') return '失衡期'
-  if (situation === 'non_stagger') return '非失衡期'
-  return '全局'
+  return formatApplySituationLabel(item.effect)
 }
 
 function noteText(item: CollectedEffect) {
@@ -285,7 +293,7 @@ function formatSigned(value: number) {
   return formatCalcSigned(value)
 }
 
-/** 参考站效果行：招式前缀 + 属性名 + 数值；非全局作用情况标在行首 */
+/** 参考站效果行：招式前缀 + 属性名 + 数值（叠层按当前层数出总值、转模出解析值）；非全局作用情况紧随 [强攻] 之后 */
 function effectResultText(item: CollectedEffect) {
   let amountText = ''
   if (item.effect.kind === 'stacked' || item.effect.stackable) {
@@ -297,19 +305,11 @@ function effectResultText(item: CollectedEffect) {
   } else {
     amountText = formatSigned(Number(item.effect.value) || 0)
   }
-  const body = formatBuffEffectResultText(item.effect, amountText, {
+  return formatBuffEffectResultText(item.effect, amountText, {
     statLabelFn: (stat) => statLabel(stat),
     skillSubcategories: props.skillSubcategories,
+    applySituation: true,
   })
-  const situation = situationLabel(item)
-  if (situation === '全局') return body
-  // [强攻] 放最前，作用情况紧随其后
-  const applyProf = formatApplyProfessionLabel(item.effect)
-  if (applyProf && body.startsWith(applyProf)) {
-    const rest = body.slice(applyProf.length).trimStart()
-    return `${applyProf}[${situation}] ${rest}`
-  }
-  return `[${situation}] ${body}`
 }
 
 function cardSituationLabels(card: BuffCardGroup) {
@@ -563,7 +563,9 @@ function close() {
                     <span class="title-sep">|</span>
                     {{ card.blockName }}
                   </strong>
-                  <small v-if="card.note" :title="card.note">{{ card.note }}</small>
+                  <small v-if="card.note" :title="card.note">
+                    <BuffRichText :text="card.note" />
+                  </small>
                 </span>
               </button>
             </div>
@@ -577,7 +579,9 @@ function close() {
                     :checked="isEnabled(item)"
                     @change="toggleEffect(item)"
                   />
-                  <span class="buff-effect-text">{{ effectResultText(item) }}</span>
+                  <span class="buff-effect-text">
+                    <BuffRichText :text="effectResultText(item)" />
+                  </span>
                 </label>
                 <label
                   v-if="isStackable(item)"

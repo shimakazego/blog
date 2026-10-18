@@ -9,11 +9,15 @@ export function normalizePanelMultFactorPercent(value: number | undefined | null
   return num
 }
 
-/** 增益倍率修正：旧数据按「已减 1」增量（0.2 = +20%）迁移为百分点 */
+/**
+ * 增益倍率修正：一律按百分点增量（默认 0）。
+ * 例：+20 个百分点填 20；-75 表示减 75 个百分点。
+ * 历史脏数据曾把「无修正 / ×1」误存成增量 1（仅 +1%），读入时归零。
+ */
 export function normalizeBuffMultFactorDelta(value: number | undefined | null): number {
   const num = Number(value)
   if (!Number.isFinite(num) || num === 0) return 0
-  if (Math.abs(num) <= 5 && !Number.isInteger(num)) return num * 100
+  if (num === 1) return 0
   return num
 }
 

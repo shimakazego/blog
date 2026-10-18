@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import CalculatorAvatar from '@/components/calculator/CalculatorAvatar.vue'
 import type { TeamSlot } from '@/components/calculator/DamageCalcPage.vue'
 import type { AgentBuffDoc, DriveDiscBuffDoc, WengineBuffDoc } from '@/types/calculator'
+import type { AgentPanelSourceKind } from '@/types/damageCalcHistory'
 import type { PanelStats } from '@/types/calculatorPanel'
 import { isWengineProfessionMatch } from '@/utils/calculatorUi'
+import { AGENT_PANEL_SOURCE_LABELS, AGENT_PANEL_SOURCE_ORDER } from '@/utils/agentPanelSources'
 import { teamSlotDisplayLabel } from '@/utils/teamSlotLabel'
 import { formatCalcDecimal } from '@/utils/calcNumberFormat'
 
@@ -20,6 +22,8 @@ const props = defineProps<{
   driveDiscs: DriveDiscBuffDoc[]
   activeIndex: number
   panelPreviews?: Array<SlotPanelPreview | PanelStats | null | undefined>
+  /** 各槽位**当前生效**的面板来源（面板导入 / 词条导入）；没数据时为 null */
+  panelSourceKinds?: Array<AgentPanelSourceKind | null | undefined>
   /** 含局外/局内转模效果的槽位索引 */
   convertSlotIndexes?: Set<number> | number[]
 }>()
@@ -31,6 +35,30 @@ const emit = defineEmits<{
 }>()
 
 const hoverIndex = ref<number | null>(null)
+let hoverHideTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearHoverHideTimer() {
+  if (hoverHideTimer == null) return
+  clearTimeout(hoverHideTimer)
+  hoverHideTimer = null
+}
+
+function showHover(index: number) {
+  clearHoverHideTimer()
+  hoverIndex.value = index
+}
+
+function scheduleHideHover() {
+  clearHoverHideTimer()
+  hoverHideTimer = setTimeout(() => {
+    hoverIndex.value = null
+    hoverHideTimer = null
+  }, 220)
+}
+
+onUnmounted(() => {
+  clearHoverHideTimer()
+})
 
 function isConvertSlot(index: number) {
   if (!props.convertSlotIndexes) return false
@@ -80,6 +108,64 @@ function formatStat(key: keyof PanelStats, value: number) {
   return formatCalcDecimal(value, 2)
 }
 
+/** 该槽当前生效的面板来源；两份都没数据时为 null（卡片不标来源） */
+function panelSourceKindOf(index: number): AgentPanelSourceKind | null {
+  return props.panelSourceKinds?.[index] ?? null
+}
+
+/**
+ * 卡面标签的文字：该槽位**当前生效**那份面板的名字；没导入过 → 空串（卡面整块不渲染）。
+ *
+ * 只读，且**故意不提供切换**（用户 2026-09-17 口径：卡片上那个点击只负责"选谁在编辑"，
+ * 不该有改配置的能力 —— 切换激活份是改计算取数来源，去下方「局外面板」块走
+ * `update:active-panel-source`）。口径与悬停卡右上那两个胶囊一致：只回答"现在算的是哪一份"。
+ */
+function panelSourceLabelOf(index: number): string {
+  const kind = panelSourceKindOf(index)
+  return kind ? AGENT_PANEL_SOURCE_LABELS[kind] : ''
+}
+
+/** 胶囊 tooltip：说清「标的是生效那份」以及去哪切换 */
+function panelSourceTitle(kind: AgentPanelSourceKind, index: number) {
+  const current = panelSourceKindOf(index)
+  return kind === current
+    ? `当前生效：${AGENT_PANEL_SOURCE_LABELS[kind]}（卡片的局外/局内都取自这份）`
+    : `未生效：${AGENT_PANEL_SOURCE_LABELS[kind]}；在导入弹窗的「面板来源」里切换`
+}
+
+/**
+ * 悬停卡顶部的角色身份三行（2026-10-01 用户口径，显示在「局外面板」之前）：
+ * 名字 · 属性 · 职业 / 影 · 音擎 / 驱动盘。按槽位取数（卡片是逐槽悬停的），
+ * 与编辑区那套 activeSlot 版摘要同口径。
+ */
+function identityLinesOf(index: number): string[] {
+  const slot = props.teamSlots[index]
+  if (!slot?.agentId) return []
+  const agent = agentOf(slot)
+  if (!agent) return []
+  const lines: string[] = []
+  lines.push([agent.name, agent.element, agent.profession].filter(Boolean).join(' · '))
+  const wengine = wengineOf(slot)
+  const wengineParts = [`${slot.rank}影`]
+  if (wengine) {
+    wengineParts.push(
+      isWengineProfessionMatch(agent.profession, wengine.profession)
+        ? `${wengine.name} · 精${slot.wengineRefine}`
+        : `${wengine.name} · 异职`,
+    )
+  } else {
+    wengineParts.push('未佩戴音擎')
+  }
+  lines.push(wengineParts.join(' · '))
+  const discParts: string[] = []
+  const four = discOf(slot.fourPieceDriveDiscId)
+  const two = discOf(slot.twoPieceDriveDiscId)
+  if (four?.name) discParts.push(`4件套 ${four.name}`)
+  if (two?.name) discParts.push(`2件套 ${two.name}`)
+  lines.push(discParts.length ? discParts.join(' · ') : '未选驱动盘')
+  return lines
+}
+
 const EXTERNAL_PREVIEW_FIELDS: { key: keyof PanelStats; label: string }[] = [
   { key: 'hp', label: '生命值' },
   { key: 'atk', label: '攻击力' },
@@ -93,21 +179,24 @@ const EXTERNAL_PREVIEW_FIELDS: { key: keyof PanelStats; label: string }[] = [
   { key: 'mastery', label: '精通' },
   { key: 'anomalyControl', label: '异常掌控' },
   { key: 'energyRegen', label: '能量回复效率%' },
-  { key: 'anomalyDuration', label: '异常持续时间(s)' },
-  { key: 'disorderBaseMult', label: '紊乱基础倍率%' },
-  { key: 'disorderCompMult', label: '紊乱补偿倍率%' },
-  { key: 'turbulenceBaseMult', label: '乱流基础倍率%' },
-  { key: 'turbulenceCompMult', label: '乱流补偿倍率%' },
+  { key: 'impact', label: '冲击力' },
 ]
 
 const FINAL_PREVIEW_FIELDS: { key: keyof PanelStats; label: string }[] = [
   ...EXTERNAL_PREVIEW_FIELDS,
+  { key: 'sharpenCritDmgBonus', label: '锐爆伤害%' },
   { key: 'anomalyCritRate', label: '异常暴击%' },
   { key: 'anomalyCritDmg', label: '异常爆伤%' },
   { key: 'anomalyDmgBonus', label: '异常增伤%' },
   { key: 'disorderDmgBonus', label: '紊乱增伤%' },
   { key: 'turbulenceDmgBonus', label: '乱流增伤%' },
 ]
+
+function finalPreviewFieldsFor(index: number) {
+  const agent = agentOf(props.teamSlots[index]!)
+  if (agent?.profession === '锋御') return FINAL_PREVIEW_FIELDS
+  return FINAL_PREVIEW_FIELDS.filter((field) => field.key !== 'sharpenCritDmgBonus')
+}
 
 const activeSlot = computed(() => props.teamSlots[props.activeIndex])
 const activeAgent = computed(() => (activeSlot.value ? agentOf(activeSlot.value) : undefined))
@@ -173,8 +262,8 @@ const driveDiscLine = computed(() => {
         v-for="(slot, index) in teamSlots"
         :key="index"
         class="slot-wrap"
-        @mouseenter="hoverIndex = index"
-        @mouseleave="hoverIndex = null"
+        @mouseenter="showHover(index)"
+        @mouseleave="scheduleHideHover"
       >
         <button
           type="button"
@@ -192,6 +281,13 @@ const driveDiscLine = computed(() => {
           />
           <span class="slot-name">{{ label(slot, index) }}</span>
           <span v-if="isConvertSlot(index)" class="convert-dot" title="该角色影画/音擎/驱动盘含局外或局内转模">转模</span>
+          <!-- 当前生效的面板来源（**只读**）：只显示激活那一份，没导入过不显示；切换在下方「局外面板」块 -->
+          <span
+            v-if="panelSourceLabelOf(index)"
+            class="panel-source-dot"
+            :title="`当前生效的面板来源：${panelSourceLabelOf(index)}（另一份仍保留；要切换去下方「局外面板」块）`"
+            >{{ panelSourceLabelOf(index) }}</span
+          >
           <span v-if="activeIndex === index" class="editing-dot">编辑中</span>
         </button>
         <div
@@ -199,8 +295,28 @@ const driveDiscLine = computed(() => {
           class="panel-hover-card"
           :class="{ 'panel-hover-card--end': index === teamSlots.length - 1 }"
           role="tooltip"
+          @mouseenter="showHover(index)"
+          @mouseleave="scheduleHideHover"
         >
-          <p class="panel-hover-title">局外面板</p>
+          <div v-if="identityLinesOf(index).length" class="panel-hover-identity">
+            <p v-for="(line, lineIndex) in identityLinesOf(index)" :key="`identity-${index}-${lineIndex}`">
+              {{ line }}
+            </p>
+          </div>
+          <div class="panel-hover-head">
+            <p class="panel-hover-title">局外面板</p>
+            <span v-if="panelSourceKindOf(index)" class="panel-source-tags">
+              <span
+                v-for="kind in AGENT_PANEL_SOURCE_ORDER"
+                :key="`src-${kind}`"
+                class="panel-source-tag"
+                :class="{ active: panelSourceKindOf(index) === kind }"
+                :title="panelSourceTitle(kind, index)"
+              >
+                {{ AGENT_PANEL_SOURCE_LABELS[kind] }}
+              </span>
+            </span>
+          </div>
           <dl class="panel-hover-grid">
             <div
               v-for="field in EXTERNAL_PREVIEW_FIELDS"
@@ -215,7 +331,7 @@ const driveDiscLine = computed(() => {
             <p class="panel-hover-title panel-hover-title--final">局内面板</p>
             <dl class="panel-hover-grid">
               <div
-                v-for="field in FINAL_PREVIEW_FIELDS"
+                v-for="field in finalPreviewFieldsFor(index)"
                 :key="`fin-${field.key}`"
                 class="panel-hover-item"
               >
@@ -381,6 +497,25 @@ const driveDiscLine = computed(() => {
   color: #c5d8ea;
 }
 
+/*
+ * 卡面「当前生效的面板来源」标签：只读，观感与悬停卡里 `.panel-source-tag.active` 同色系
+ * （红 = 当前生效那份）。只显示激活那一份；没导入过整块不渲染。
+ * **不提供点击** —— 卡片的点击是"选谁在编辑"，不该有改配置的能力（用户 2026-09-17 口径）。
+ */
+.panel-source-dot {
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(224, 112, 112, 0.45);
+  background: rgba(224, 112, 112, 0.12);
+  color: #f0a8a8;
+  font-size: 0.64rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  padding: 0.1rem 0.38rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .slot-btn:not(:has(.convert-dot)) .editing-dot {
   margin-left: auto;
 }
@@ -524,7 +659,7 @@ const driveDiscLine = computed(() => {
 
 .panel-hover-card {
   position: absolute;
-  top: calc(100% + 0.35rem);
+  top: calc(100% + 0.55rem);
   left: 0;
   z-index: 50;
   width: min(38rem, 94vw);
@@ -536,7 +671,17 @@ const driveDiscLine = computed(() => {
   background: #1a1e26;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   color: #d7dde8;
-  pointer-events: none;
+  pointer-events: auto;
+}
+
+/* 桥接槽位与卡片之间的空隙，避免慢速移入时断开 */
+.panel-hover-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -0.7rem;
+  height: 0.7rem;
 }
 
 .panel-hover-card--end {
@@ -551,6 +696,65 @@ const driveDiscLine = computed(() => {
   color: #c9a55c;
 }
 
+/* 标题行：来源胶囊与「局外面板」同一行，右侧对齐 */
+.panel-hover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.4rem;
+}
+
+/* 角色身份三行（2026-10-01）：名字·属性·职业 / 影·音擎 / 驱动盘，压在「局外面板」之前 */
+.panel-hover-identity {
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid rgba(201, 165, 92, 0.25);
+}
+
+/* 白天主题：悬停卡在白天是**白底**（calculatorLight.css 有整卡覆盖），身份行必须给深字。
+   组件内不再写 light 覆盖（此前误按深底写了浅字，正是"白天看不清"的根因）。 */
+.panel-hover-identity p {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: #ecf1f8;
+  white-space: nowrap;
+}
+
+.panel-hover-identity p:first-child {
+  font-weight: 600;
+  color: #f0d7a2;
+}
+
+.panel-hover-head .panel-hover-title {
+  margin: 0;
+}
+
+.panel-source-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+/* 两枚胶囊：生效那份红字（同导入弹窗的「面板来源」），另一枚淡灰提亮到可读（2026-10-01 用户反馈） */
+.panel-source-tag {
+  padding: 0.05rem 0.45rem;
+  border: 1px solid #4a5668;
+  border-radius: 999px;
+  color: #a3aebb;
+  font-size: 0.68rem;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.panel-source-tag.active {
+  border-color: #e07070;
+  color: #e53935;
+  font-weight: 650;
+}
+
 .panel-hover-title--final {
   margin-top: 0.55rem;
   padding-top: 0.45rem;
@@ -561,7 +765,7 @@ const driveDiscLine = computed(() => {
 .panel-hover-empty {
   margin: 0.35rem 0 0;
   font-size: 0.72rem;
-  color: #8b93a3;
+  color: #b6c0cd;
 }
 
 .panel-hover-grid {
@@ -575,7 +779,7 @@ const driveDiscLine = computed(() => {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 0.55rem;
+  gap: 0.2rem;
   min-width: 0;
 }
 
@@ -583,7 +787,7 @@ const driveDiscLine = computed(() => {
   margin: 0;
   flex: 1 1 auto;
   font-size: 0.72rem;
-  color: #8b93a3;
+  color: #b6c0cd;
   line-height: 1.35;
 }
 
@@ -592,7 +796,7 @@ const driveDiscLine = computed(() => {
   flex: 0 0 auto;
   font-size: 0.74rem;
   font-weight: 600;
-  color: #e8edf5;
+  color: #f2f6fb;
   font-variant-numeric: tabular-nums;
 }
 

@@ -138,6 +138,23 @@
   color: #9f7d3f !important;
 }
 
+.calculator-page.theme-light .team-slot-sticky .panel-source-tag {
+  border-color: #b7d3e8 !important;
+  color: #4d6a80 !important;
+}
+
+.calculator-page.theme-light .team-slot-sticky .panel-source-tag.active {
+  border-color: #e07070 !important;
+  color: #c62828 !important;
+}
+
+/* 卡面「当前生效的面板来源」标签（只读）：浅色下与悬停卡里那份 active 同色系 */
+.calculator-page.theme-light .team-slot-sticky .panel-source-dot {
+  border-color: #e07070 !important;
+  background: color-mix(in srgb, #fdecec 70%, #ffffff) !important;
+  color: #c62828 !important;
+}
+
 .calculator-page.theme-light .team-slot-sticky .panel-hover-title--final {
   border-top-color: #d5e4f0 !important;
   color: #526b36 !important;
@@ -432,7 +449,6 @@
 
 /* 鈥斺€?璁＄畻鏂瑰紡 / chip 鈥斺€?*/
 .calculator-page.theme-light .calc-mode-tab,
-.calculator-page.theme-light .chip,
 .calculator-page.theme-light .result-mode-btn,
 .calculator-page.theme-light .mindscape-tab,
 .calculator-page.theme-light .ocr-json-btn,
@@ -443,8 +459,30 @@
   color: var(--calc-text) !important;
 }
 
+/*
+ * chip 单独一份，且与导入弹窗（`assets/calculatorChip.css` 的浅色覆盖）逐值一致 ——
+ * 否则页面内的 chip 与弹窗里的 chip 各是一种浅灰，正是要统一掉的那种差异。
+ */
+.calculator-page.theme-light .chip {
+  border-color: #d5dae3 !important;
+  background: #f5f7fa !important;
+  background-color: #f5f7fa !important;
+  color: #344054 !important;
+}
+
+.calculator-page.theme-light .chip:hover:not(:disabled) {
+  border-color: #c9a55c !important;
+  color: #1c212a !important;
+}
+
+.calculator-page.theme-light .chip.active {
+  border-color: #c9a55c !important;
+  background: #fff8eb !important;
+  background-color: #fff8eb !important;
+  color: #1c212a !important;
+}
+
 .calculator-page.theme-light .calc-mode-tab:hover,
-.calculator-page.theme-light .chip:hover,
 .calculator-page.theme-light .ocr-json-btn:hover,
 .calculator-page.theme-light .image-picker-btn:hover {
   background: var(--calc-surface-3) !important;
@@ -474,7 +512,6 @@
 }
 
 .calculator-page.theme-light .calc-mode-tab.active,
-.calculator-page.theme-light .chip.active,
 .calculator-page.theme-light .result-mode-btn.active,
 .calculator-page.theme-light .mindscape-tab.active,
 .calculator-page.theme-light .slot-card.active,
@@ -623,7 +660,7 @@
 
 .calculator-page.theme-light .formula-label,
 .calculator-page.theme-light .formula-aligned-term-label {
-  color: var(--calc-muted) !important;
+  color: var(--calc-text) !important;
 }
 
 .calculator-page.theme-light .formula-value,
@@ -943,21 +980,45 @@ body:has(.calculator-page.theme-light) .history-summary-bar .loaded-clear:hover 
   color: var(--calc-muted) !important;
 }
 
-.calculator-page.theme-light .opt-section .kind-tab,
-.calculator-page.theme-light .opt-section .kind-mode-tab,
-.calculator-page.theme-light .opt-section .detail-tab,
+/*
+ * 动作按钮（重新计算收益 / 计算敏感度 …）保持方角按钮；
+ * 原先这里的 `.kind-tab` / `.kind-mode-tab` / `.detail-tab` 三类已并入统一 chip（见
+ * `assets/calculatorChip.css`），组件里不再有这些类名，故一并删掉。
+ */
 .calculator-page.theme-light .opt-section .ghost-btn {
   border-color: var(--calc-border) !important;
   background: var(--calc-surface-2) !important;
   color: var(--calc-text) !important;
 }
 
-.calculator-page.theme-light .opt-section .kind-tab.active,
-.calculator-page.theme-light .opt-section .kind-mode-tab.active,
-.calculator-page.theme-light .opt-section .detail-tab.active {
+/*
+ * 「最优分配」的二选一按钮（`.alloc-mode-btn`）：深色值写在组件里，这里给浅色一套。
+ * 选中态沿用 `.calc-run-btn` 那套强调色，保证与「正在跑/最近跑过」的含义一致。
+ */
+.calculator-page.theme-light .opt-section .alloc-mode-btn {
+  border-color: var(--calc-border) !important;
+  background: var(--calc-surface-2) !important;
+  color: var(--calc-text) !important;
+}
+
+.calculator-page.theme-light .opt-section .alloc-mode-btn:hover:not(:disabled) {
+  border-color: #b8944a !important;
+}
+
+.calculator-page.theme-light .opt-section .alloc-mode-btn.is-active {
   border-color: var(--calc-accent) !important;
   background: var(--calc-accent-bg) !important;
   color: #5c4818 !important;
+}
+
+.calculator-page.theme-light .opt-section .alloc-mode-label,
+.calculator-page.theme-light .opt-section .alloc-mode-notes,
+.calculator-page.theme-light .opt-section .alloc-note {
+  color: var(--calc-muted) !important;
+}
+
+.calculator-page.theme-light .opt-section .alloc-mode-notes b {
+  color: var(--calc-text) !important;
 }
 
 .calculator-page.theme-light .opt-section .detail {
@@ -1172,7 +1233,7 @@ body:has(.calculator-page.theme-light) .history-summary-bar .loaded-clear:hover 
 
 .calculator-page.theme-light .opt-section .owner-share-meta,
 .calculator-page.theme-light .opt-section .owner-share-events {
-  color: var(--calc-muted) !important;
+  color: var(--calc-text) !important;
 }
 
 .calculator-page.theme-light .opt-section .owner-share-track {
@@ -1180,7 +1241,7 @@ body:has(.calculator-page.theme-light) .history-summary-bar .loaded-clear:hover 
 }
 
 .calculator-page.theme-light .opt-section .owner-share-hint {
-  color: var(--calc-muted) !important;
+  color: var(--calc-text) !important;
 }
 
 .calculator-page.theme-light .opt-section .owner-share-trigger--expandable:hover,
@@ -1208,7 +1269,7 @@ body:has(.calculator-page.theme-light) .history-summary-bar .loaded-clear:hover 
 
 .calculator-page.theme-light .opt-section .owner-event-meta,
 .calculator-page.theme-light .opt-section .owner-event-ratio-owner {
-  color: var(--calc-muted) !important;
+  color: var(--calc-text) !important;
 }
 
 .calculator-page.theme-light .opt-section .owner-event-track {
@@ -1270,7 +1331,7 @@ body:has(.calculator-page.theme-light) .history-summary-bar .loaded-clear:hover 
 .calculator-page.theme-light .opt-section .damage-result-detail .formula-aligned-term-label,
 .calculator-page.theme-light .opt-section .damage-result-detail .formula-aligned-hint,
 .calculator-page.theme-light .opt-section .damage-result-detail .formula-aligned-op {
-  color: var(--calc-muted) !important;
+  color: var(--calc-text) !important;
 }
 
 .calculator-page.theme-light .opt-section .damage-result-detail .formula-aligned-group + .formula-aligned-group {
@@ -1805,6 +1866,102 @@ body:has(.calculator-page.theme-light) .history-summary-bar .loaded-clear,
   border-top-color: #d5dae3 !important;
 }
 
+/*
+ * 本行增益例外弹窗（SkillBuffOverrideModal，同样 Teleport 到 body）。
+ * 视觉对齐上面的局内增益选择器，override 也放一处。
+ */
+[data-theme='light'] .bo-mask {
+  background: rgba(15, 23, 42, 0.35) !important;
+}
+
+[data-theme='light'] .bo-card {
+  border-color: #d5dae3 !important;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f8fb 100%) !important;
+  color: #1c212a !important;
+  box-shadow: 0 18px 48px rgba(16, 24, 40, 0.12) !important;
+  color-scheme: light;
+}
+
+[data-theme='light'] .bo-head {
+  border-bottom-color: #e4e7ec !important;
+}
+
+[data-theme='light'] .bo-title-row h3 {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .bo-close {
+  color: #667085 !important;
+}
+
+[data-theme='light'] .bo-hint,
+[data-theme='light'] .bo-row,
+[data-theme='light'] .bo-title-row-label,
+[data-theme='light'] .bo-copy small,
+[data-theme='light'] .bo-sep,
+[data-theme='light'] .bo-count,
+[data-theme='light'] .bo-empty {
+  color: #667085 !important;
+}
+
+[data-theme='light'] .bo-badge,
+[data-theme='light'] .bo-ghost {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+  color: #9a6a00 !important;
+  color-scheme: light;
+}
+
+[data-theme='light'] .bo-hint-inherit {
+  color: #9a6a00 !important;
+}
+
+[data-theme='light'] .bo-ghost {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .bo-ghost:hover:not(:disabled) {
+  border-color: #c9a55c !important;
+  background: #fff8eb !important;
+}
+
+[data-theme='light'] .bo-row-card {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+}
+
+[data-theme='light'] .bo-group-tabs {
+  background: #eef1f5 !important;
+}
+
+[data-theme='light'] .bo-group-tab {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+  color: #1c212a !important;
+  color-scheme: light;
+}
+
+[data-theme='light'] .bo-group-tab:hover {
+  border-color: #c9a55c !important;
+  background: #fff8eb !important;
+}
+
+[data-theme='light'] .bo-group-tab.active {
+  border-color: #98a2b3 !important;
+  background: #fff8eb !important;
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .bo-copy strong,
+[data-theme='light'] .bo-effect-text {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .bo-effect-row {
+  border-bottom-color: #e4e7ec !important;
+}
+
+
 /* 额外 Buff 弹窗（Teleport 到 body） */
 [data-theme='light'] .extra-buff-modal .extra-buff-editor .field {
   color: #667085 !important;
@@ -2185,7 +2342,7 @@ body:has(.calculator-page.theme-light) .history-summary-bar .loaded-clear,
 
 .calculator-page.theme-light .owner-share-meta,
 .calculator-page.theme-light .owner-share-events {
-  color: var(--calc-muted) !important;
+  color: var(--calc-text) !important;
 }
 
 .calculator-page.theme-light .owner-share-track {
@@ -2193,7 +2350,7 @@ body:has(.calculator-page.theme-light) .history-summary-bar .loaded-clear,
 }
 
 .calculator-page.theme-light .owner-share-hint {
-  color: var(--calc-muted) !important;
+  color: var(--calc-text) !important;
 }
 
 .calculator-page.theme-light .owner-share-trigger--expandable:hover,
@@ -2221,7 +2378,7 @@ body:has(.calculator-page.theme-light) .history-summary-bar .loaded-clear,
 
 .calculator-page.theme-light .owner-event-meta,
 .calculator-page.theme-light .owner-event-ratio-owner {
-  color: var(--calc-muted) !important;
+  color: var(--calc-text) !important;
 }
 
 .calculator-page.theme-light .owner-event-track {
@@ -2796,6 +2953,19 @@ body:has(.calculator-page.theme-light) .preset-preview li,
  * 导入弹窗 · 面板 Tab（Teleport 到 body；SlotPanelEntryForm / OCR 嵌入块
  * 不在 .calculator-page 内，必须用 [data-theme='light'] 覆盖 scoped 深色）
  */
+[data-theme='light'] .unified-modal .panel-locked-state {
+  border-color: #b7d3e8 !important;
+  background: #ffffff !important;
+}
+
+[data-theme='light'] .unified-modal .panel-locked-title {
+  color: #8a6a2e !important;
+}
+
+[data-theme='light'] .unified-modal .panel-locked-desc {
+  color: #4d6a80 !important;
+}
+
 [data-theme='light'] .unified-modal .tab-panel--panel .upload-section--embedded,
 [data-theme='light'] .unified-modal .slot-panel-entry .panel-block {
   border-color: #d5dae3 !important;
@@ -2823,6 +2993,10 @@ body:has(.calculator-page.theme-light) .preset-preview li,
 }
 
 [data-theme='light'] .unified-modal .tab-panel--panel .ocr-quota-hint {
+  color: #8a6d2e !important;
+}
+
+[data-theme='light'] .unified-modal .slot-panel-entry .field-example {
   color: #8a6d2e !important;
 }
 
@@ -2920,24 +3094,21 @@ body:has(.calculator-page.theme-light) .preset-preview li,
   color-scheme: light;
 }
 
-[data-theme='light'] .unified-modal .entry-mode-label {
-  color: #8a6d2e !important;
+[data-theme='light'] .unified-modal .panel-source-title,
+[data-theme='light'] .unified-modal .panel-source-empty {
+  color: #667085 !important;
 }
 
-[data-theme='light'] .unified-modal .entry-mode-tab {
+[data-theme='light'] .unified-modal .panel-source-btn {
   border-color: #d5dae3 !important;
+  color: #667085 !important;
   background: #ffffff !important;
-  color: #667085 !important;
 }
 
-[data-theme='light'] .unified-modal .entry-mode-tab.active {
-  border-color: #c9a55c !important;
-  background: #fff8eb !important;
-  color: #6a4e1d !important;
-}
-
-[data-theme='light'] .unified-modal .entry-mode-hint {
-  color: #667085 !important;
+[data-theme='light'] .unified-modal .panel-source-btn.active {
+  border-color: #e07070 !important;
+  color: #c62828 !important;
+  background: #fff5f5 !important;
 }
 
 /* 顶部槽位悬停局外面板小窗 */
@@ -2952,8 +3123,27 @@ body:has(.calculator-page.theme-light) .preset-preview li,
   color: #8a6d2e !important;
 }
 
+.calculator-page.theme-light .panel-source-tag {
+  border-color: #d5dae3 !important;
+  color: #667085 !important;
+}
+
+.calculator-page.theme-light .panel-source-tag.active {
+  border-color: #e07070 !important;
+  color: #c62828 !important;
+}
+
 .calculator-page.theme-light .panel-hover-item dt {
   color: #667085 !important;
+}
+
+/* 角色身份三行（2026-10-01）：白天主题下浅底深字 —— 组件里那两条 light 覆盖写的是深底口径，这里按真实浅底纠正 */
+.calculator-page.theme-light .panel-hover-identity p {
+  color: #1c212a !important;
+}
+
+.calculator-page.theme-light .panel-hover-identity p:first-child {
+  color: #8a6d2e !important;
 }
 
 .calculator-page.theme-light .panel-hover-item dd {
@@ -3317,6 +3507,31 @@ body:has(.calculator-page.theme-light) .preset-preview li,
   background: #ffffff !important;
   color: #1c212a !important;
 }
+[data-theme='light'] .sf-name-pop {
+  border-color: #c9a55c !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  color: #1c212a !important;
+  box-shadow:
+    0 0 0 1px rgba(201, 165, 92, 0.28),
+    0 0 12px 4px rgba(28, 33, 42, 0.1),
+    0 8px 22px rgba(28, 33, 42, 0.12) !important;
+}
+[data-theme='light'] .sf-name-pop::before {
+  background: rgba(255, 255, 255, 0.7) !important;
+}
+[data-theme='light'] .sf-name-pop-note {
+  border-top-color: #e6e8ee !important;
+  color: #5a6575 !important;
+}
+[data-theme='light'] .sf-name-pop-mult {
+  border-top-color: #e6e8ee !important;
+}
+[data-theme='light'] .sf-name-pop-mult-label {
+  color: #6a7382 !important;
+}
+[data-theme='light'] .sf-name-pop-mult-val {
+  color: #8a6a1f !important;
+}
 [data-theme='light'] .skill-detail-head h3,
 [data-theme='light'] .skill-flow-modal .detail-mult,
 [data-theme='light'] .skill-flow-modal .detail-section-title,
@@ -3421,13 +3636,13 @@ body:has(.calculator-page.theme-light) .preset-preview li,
 [data-theme='light'] .skill-detail-panel .chip {
   border-color: #d5dae3 !important;
   background: #f5f7fa !important;
-  color: #1c212a !important;
+  color: #344054 !important;
 }
 [data-theme='light'] .skill-flow-modal .chip.active,
 [data-theme='light'] .skill-detail-panel .chip.active {
   border-color: #c9a55c !important;
   background: #fff8eb !important;
-  color: #8a6a1f !important;
+  color: #1c212a !important;
 }
 [data-theme='light'] .skill-flow-modal .chip-group + .chip-group {
   border-left-color: #d5dae3 !important;
@@ -3439,4 +3654,443 @@ body:has(.calculator-page.theme-light) .preset-preview li,
 [data-theme='light'] .skill-detail-panel .custom-form label,
 [data-theme='light'] .skill-detail-panel .type-checks {
   color: #667085 !important;
+}
+
+[data-theme='light'] .skill-detail-foot {
+  border-top-color: #d5dae3 !important;
+  background: #f5f7fa !important;
+  box-shadow: none !important;
+}
+[data-theme='light'] .skill-detail-panel .primary-btn,
+[data-theme='light'] .skill-detail-panel .primary-btn.save-action {
+  border-color: #c9d4b8 !important;
+  background: #f3f7ee !important;
+  color: #3d4f2f !important;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+}
+[data-theme='light'] .skill-detail-panel .primary-btn:hover,
+[data-theme='light'] .skill-detail-panel .primary-btn.save-action:hover {
+  border-color: #c9a55c !important;
+  background: #fff8eb !important;
+  color: #5c4818 !important;
+}
+
+/* 技能组详情 / 组内细调（Teleport 到 body，须用 [data-theme] + !important） */
+[data-theme='light'] .skill-detail-body {
+  background: #ffffff !important;
+  color: #1c212a !important;
+}
+[data-theme='light'] .skill-detail-panel .muted,
+[data-theme='light'] .skill-detail-panel .empty-hint,
+[data-theme='light'] .skill-detail-panel .col-desc,
+[data-theme='light'] .group-tune-panel .col-desc {
+  color: #5c6570 !important;
+}
+[data-theme='light'] .calc-member-col {
+  border-color: #d5dae3 !important;
+  background: #f5f7fa !important;
+}
+[data-theme='light'] .calc-member-col-head {
+  border-color: #eef1f5 !important;
+  background: #ffffff !important;
+}
+[data-theme='light'] .calc-member-col-head h4,
+[data-theme='light'] .calc-member-main strong,
+[data-theme='light'] .calc-member-name {
+  color: #1c212a !important;
+}
+[data-theme='light'] .calc-member-count,
+[data-theme='light'] .calc-member-controls,
+[data-theme='light'] .calc-member-main .muted {
+  color: #5c6570 !important;
+}
+[data-theme='light'] .calc-member-card {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+}
+[data-theme='light'] .skill-detail-panel .order-btn,
+[data-theme='light'] .group-tune-panel .order-btn {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+  color: #1c212a !important;
+}
+[data-theme='light'] .group-tune-panel .sf-card {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+}
+[data-theme='light'] .group-tune-panel .sf-card .sf-name {
+  color: #1c212a !important;
+}
+[data-theme='light'] .skill-detail-panel .group-member-detail {
+  border-color: #d5dae3 !important;
+  background: #f5f7fa !important;
+}
+[data-theme='light'] .skill-detail-panel .group-note-banner {
+  border-color: #9a7318 !important;
+  background: transparent !important;
+  color: #12161d !important;
+  font-weight: 700 !important;
+}
+[data-theme='light'] .skill-detail-panel .group-total-mult {
+  color: #3a4250 !important;
+}
+[data-theme='light'] .skill-detail-panel .group-total-mult strong {
+  color: #12161d !important;
+}
+[data-theme='light'] .skill-detail-panel .group-total-mult .muted {
+  color: #5a6575 !important;
+}
+[data-theme='light'] .skill-detail-panel .field-block {
+  color: #1c212a !important;
+}
+[data-theme='light'] .skill-detail-panel .sf-card {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+}
+[data-theme='light'] .skill-detail-panel .sf-card .sf-name {
+  color: #1c212a !important;
+}
+
+/*
+ * 词条库弹窗（AffixLibraryModal）：Teleport 到 body，用 [data-theme='light'] 覆盖。
+ * 配色与 UnifiedPresetPicker 保持一致。
+ */
+[data-theme='light'] .affix-library-overlay {
+  background: rgba(15, 23, 42, 0.35) !important;
+}
+
+[data-theme='light'] .affix-library-modal {
+  border-color: #d5dae3 !important;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f8fb 100%) !important;
+  color: #1c212a !important;
+  box-shadow: 0 18px 48px rgba(16, 24, 40, 0.12) !important;
+}
+
+[data-theme='light'] .affix-library-modal .modal-header {
+  border-bottom-color: #e4e7ec !important;
+}
+
+[data-theme='light'] .affix-library-modal .modal-header h2 {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .affix-library-modal .close-btn {
+  color: #667085 !important;
+}
+
+[data-theme='light'] .affix-library-modal .close-btn:hover {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .affix-library-modal .set-pane {
+  border-right-color: #e4e7ec !important;
+}
+
+[data-theme='light'] .affix-library-modal .pane-title,
+[data-theme='light'] .affix-library-modal .add-entry h5 {
+  color: #344054 !important;
+}
+
+[data-theme='light'] .affix-library-modal .field-input,
+[data-theme='light'] .affix-library-modal .inline-input,
+[data-theme='light'] .affix-library-modal .add-grid input,
+[data-theme='light'] .affix-library-modal .add-grid select {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .affix-library-modal .set-item {
+  border-color: #e4e7ec !important;
+  background: #fafbfc !important;
+}
+
+[data-theme='light'] .affix-library-modal .set-item.active {
+  border-color: #c9a55c !important;
+  background: #fff8eb !important;
+}
+
+[data-theme='light'] .affix-library-modal .set-name {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .affix-library-modal .set-meta,
+[data-theme='light'] .affix-library-modal .type-cell,
+[data-theme='light'] .affix-library-modal .unit-hint,
+[data-theme='light'] .affix-library-modal .add-grid label,
+[data-theme='light'] .affix-library-modal .footnote {
+  color: #667085 !important;
+}
+
+[data-theme='light'] .affix-library-modal .set-badge {
+  background: #fff3d6 !important;
+  color: #5c4818 !important;
+}
+
+[data-theme='light'] .affix-library-modal .pane-actions {
+  border-top-color: #e4e7ec !important;
+}
+
+[data-theme='light'] .affix-library-modal .entry-scroll {
+  border-color: #e4e7ec !important;
+}
+
+[data-theme='light'] .affix-library-modal .library-table th {
+  background: #f1efe9 !important;
+  color: #667085 !important;
+  border-bottom-color: #e4e7ec !important;
+}
+
+[data-theme='light'] .affix-library-modal .library-table td {
+  border-bottom-color: #f0f1f4 !important;
+}
+
+/* 「本组单词条上限」批量行：亮色下要能看清（2026-09-17 用户反馈这行被写成注释灰） */
+[data-theme='light'] .affix-library-modal .group-cap-row {
+  color: #344054 !important;
+}
+
+[data-theme='light'] .affix-library-modal .group-cap-input {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .affix-library-modal .group-cap-now {
+  color: #475467 !important;
+}
+
+[data-theme='light'] .affix-library-modal .group-cap-now strong {
+  color: #8a6a1f !important;
+}
+
+[data-theme='light'] .affix-library-modal .mini-btn {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+  color: #344054 !important;
+}
+
+[data-theme='light'] .affix-library-modal .mini-btn:hover:not(:disabled) {
+  border-color: #c9a55c !important;
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .affix-library-modal .mini-btn.ok,
+[data-theme='light'] .affix-library-modal .btn-primary {
+  border-color: #c9a55c !important;
+  background: #fff8eb !important;
+  color: #5c4818 !important;
+}
+
+[data-theme='light'] .affix-library-modal .del-btn {
+  color: #667085 !important;
+}
+
+[data-theme='light'] .affix-library-modal .edit-btn {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .affix-library-modal .entry-fields input,
+[data-theme='light'] .affix-library-modal .entry-fields select,
+[data-theme='light'] .affix-library-modal .branch-select {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .affix-library-modal .confirm-row {
+  color: #344054 !important;
+}
+
+/*
+ * 危险确认句（删除这套库）：普通正文色看不出是危险操作（用户 2026-09-13
+ * 「辨识度太低了，改成红色字体」）。上一条只管普通确认句，这条单独覆盖 danger，
+ * 用仓库统一的浅色危险红（与 .err / .mini-btn.danger 一致）。
+ */
+[data-theme='light'] .affix-library-modal .confirm-row.danger {
+  color: #b42318 !important;
+}
+
+[data-theme='light'] .affix-library-modal .err {
+  color: #b42318 !important;
+}
+
+[data-theme='light'] .affix-library-modal .ok-msg {
+  color: #027a48 !important;
+}
+
+/*
+ * 以下为步骤 34/35 新增区块（新建表单、库列表说明、页签、组页首行）的浅色配色。
+ * 这些元素是后加的，之前漏在浅色主题外 —— 深色底 + 近白字浮在浅色弹窗上（用户实测反馈）。
+ */
+[data-theme='light'] .affix-library-modal .set-list-hint,
+[data-theme='light'] .affix-library-modal .option-caption,
+[data-theme='light'] .affix-library-modal .origin-desc,
+[data-theme='light'] .affix-library-modal .group-head-hint,
+[data-theme='light'] .affix-library-modal .advanced-switch,
+[data-theme='light'] .affix-library-modal .target-cell,
+[data-theme='light'] .affix-library-modal .empty-cell {
+  color: #667085 !important;
+}
+
+[data-theme='light'] .affix-library-modal .set-new-panel {
+  border-color: #e4e7ec !important;
+  background: #f7f8fa !important;
+}
+
+[data-theme='light'] .affix-library-modal .origin-option {
+  color: #344054 !important;
+}
+
+[data-theme='light'] .affix-library-modal .origin-option--placeholder {
+  color: #98a2b3 !important;
+}
+
+/* 分页页签与组页按钮用的是统一 chip（assets/calculatorChip.css），这里不再单独覆盖 */
+
+[data-theme='light'] .affix-library-modal .group-head {
+  color: #344054 !important;
+}
+
+[data-theme='light'] .affix-library-modal .group-head-name {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .affix-library-modal .group-head-cap strong {
+  color: #8a6d28 !important;
+}
+
+/*
+ * 游戏专用分配规则弹窗：Teleport 到 body，用 [data-theme='light'] 覆盖。
+ * 配色与词条库弹窗同一套。
+ */
+[data-theme='light'] .game-rules-overlay {
+  background: rgba(15, 23, 42, 0.35) !important;
+}
+
+[data-theme='light'] .game-rules-modal {
+  border-color: #d5dae3 !important;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f8fb 100%) !important;
+  color: #1c212a !important;
+  box-shadow: 0 18px 48px rgba(16, 24, 40, 0.12) !important;
+}
+
+[data-theme='light'] .game-rules-modal .modal-header {
+  border-bottom-color: #e4e7ec !important;
+}
+
+[data-theme='light'] .game-rules-modal .modal-header h2 {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .game-rules-modal .close-btn {
+  color: #667085 !important;
+}
+
+[data-theme='light'] .game-rules-modal .close-btn:hover {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .game-rules-modal .x-field,
+[data-theme='light'] .game-rules-modal .toolbar-note,
+[data-theme='light'] .game-rules-modal .group-head,
+[data-theme='light'] .game-rules-modal .target-cell,
+[data-theme='light'] .game-rules-modal .empty {
+  color: #667085 !important;
+}
+
+[data-theme='light'] .game-rules-modal .x-field input {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .game-rules-modal .chip {
+  border-color: #d5dae3 !important;
+  background: #f5f7fa !important;
+  color: #344054 !important;
+}
+
+[data-theme='light'] .game-rules-modal .chip:hover:not(:disabled) {
+  border-color: #c9a55c !important;
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .game-rules-modal .chip.active {
+  border-color: #c9a55c !important;
+  background: #fff8eb !important;
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .game-rules-modal .group-head strong {
+  color: #8a6d28 !important;
+}
+
+[data-theme='light'] .game-rules-modal .rules-table th {
+  background: #f1efe9 !important;
+  color: #667085 !important;
+  border-bottom-color: #e4e7ec !important;
+}
+
+[data-theme='light'] .game-rules-modal .rules-table td {
+  border-bottom-color: #f0f1f4 !important;
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .game-rules-modal .rules-table .target-cell {
+  color: #667085 !important;
+}
+
+/**
+ * 求最优分配 · 高级设置弹窗（`AffixSearchAdvancedModal.vue`）
+ * 与游戏规则弹窗同一套：默认（深色）在组件里，白天主题在这里覆盖。
+ */
+[data-theme='light'] .search-advanced-overlay {
+  background: rgba(15, 23, 42, 0.35) !important;
+}
+
+[data-theme='light'] .search-advanced-modal {
+  border-color: #d5dae3 !important;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f8fb 100%) !important;
+  color: #1c212a !important;
+  box-shadow: 0 18px 48px rgba(16, 24, 40, 0.12) !important;
+}
+
+[data-theme='light'] .search-advanced-modal .modal-header {
+  border-bottom-color: #e4e7ec !important;
+}
+
+[data-theme='light'] .search-advanced-modal .modal-header h2 {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .search-advanced-modal .close-btn {
+  color: #667085 !important;
+}
+
+[data-theme='light'] .search-advanced-modal .close-btn:hover {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .search-advanced-modal .field,
+[data-theme='light'] .search-advanced-modal .modal-note,
+[data-theme='light'] .search-advanced-modal .field-suffix {
+  color: #667085 !important;
+}
+
+[data-theme='light'] .search-advanced-modal .modal-note strong {
+  color: #1c212a !important;
+}
+
+[data-theme='light'] .search-advanced-modal .modal-note.dim {
+  color: #98a2b3 !important;
+}
+
+[data-theme='light'] .search-advanced-modal .field input {
+  border-color: #d5dae3 !important;
+  background: #ffffff !important;
+  color: #1c212a !important;
 }

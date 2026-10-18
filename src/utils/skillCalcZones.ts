@@ -133,7 +133,9 @@ function pushRemielSelfRadianceRows(rows: SkillCalcZoneRow[], result: DamageCalc
   push(rows, '易伤区', result.anomalyVulnerableMultiplier)
   push(rows, '失衡易伤区', result.staggerMultiplier)
   push(rows, '耀变综合增伤区', result.radianceCombinedDmgBonusZone)
-  push(rows, '耀变倍率区', result.radianceMultZone)
+  // 耀变倍率区按百分比展示（3.6 → 360）：倍率区与防御/抗性等乘数区分开，避免误读成 3.6%
+  // （用户口径 2026-09-16；仅耀变如此展示，其他类型倍率区保持区小数）
+  push(rows, '耀变倍率区', result.radianceMultZone * 100)
   push(rows, '特殊倍率乘区', result.specialMultZone)
   push(rows, '特殊乘区', result.specialMultiplier)
   push(rows, '期望伤害', result.radianceExpected, true)
@@ -199,6 +201,9 @@ export function buildSkillCalcZoneRows(
     push(rows, '紊乱基础倍率', result.disorderBaseMultRatio)
     push(rows, '异常持续时间', result.effectiveAnomalyDuration)
     push(rows, '紊乱补偿倍率', result.disorderCompMultRatio)
+    if (isActiveZone(result.disorderMultFactor)) {
+      push(rows, '紊乱倍率修正', result.disorderMultFactor)
+    }
     push(rows, '紊乱倍率区', result.disorderZone)
     push(rows, '紊乱增伤区', result.disorderDmgBonusZone)
     push(rows, '期望伤害', result.disorderExpected, true)
@@ -206,15 +211,18 @@ export function buildSkillCalcZoneRows(
   }
 
   if (damageType === 'turbulence') {
-    const hasCritZone =
-      result.turbulenceUsesAnomalyCrit && isActiveZone(result.anomalyFullCritZone)
+    // 乱流**只吃自己的**暴击（用户 2026-10-16：不再蹭异常暴击）
+    const hasCritZone = isActiveZone(result.turbulenceFullCritZone)
     push(rows, '乱流基础倍率', result.turbulenceBaseMultRatio)
     push(rows, '异常持续时间', result.effectiveAnomalyDuration)
     push(rows, '乱流补偿倍率', result.turbulenceCompMultRatio)
+    if (isActiveZone(result.turbulenceMultFactor)) {
+      push(rows, '乱流倍率修正', result.turbulenceMultFactor)
+    }
     push(rows, '乱流倍率区', result.turbulenceZone)
     push(rows, '乱流综合增伤区', result.turbulenceCombinedDmgBonusZone)
     if (hasCritZone) {
-      push(rows, '异常暴击区', result.anomalyFullCritZone)
+      push(rows, '乱流暴击区', result.turbulenceFullCritZone)
     }
     pushAnomalyFinalDamages(rows, {
       hasCritZone,
@@ -226,11 +234,12 @@ export function buildSkillCalcZoneRows(
   }
 
   if (damageType === 'anomalyRelease') {
-    const hasCritZone = isActiveZone(result.anomalyCombinedFullCritZone)
     push(rows, '异放综合增伤区', result.anomalyReleaseCombinedDmgBonusZone)
     push(rows, '异放倍率区', result.anomalyReleaseMultZone)
+    // 「异常综合暴击区」已删除 → 异放用自己的暴击区（用户 2026-10-16）
+    const hasCritZone = isActiveZone(result.anomalyReleaseFullCritZone)
     if (hasCritZone) {
-      push(rows, '异常综合暴击区', result.anomalyCombinedFullCritZone)
+      push(rows, '异放暴击区', result.anomalyReleaseFullCritZone)
     }
     pushAnomalyFinalDamages(rows, {
       hasCritZone,
@@ -243,7 +252,8 @@ export function buildSkillCalcZoneRows(
 
   if (damageType === 'radiance') {
     push(rows, '耀变综合增伤区', result.radianceCombinedDmgBonusZone)
-    push(rows, '耀变倍率区', result.radianceMultZone)
+    // 百分比展示，同 pushRemielSelfRadianceRows 的耀变倍率区
+    push(rows, '耀变倍率区', result.radianceMultZone * 100)
     push(rows, '期望伤害', result.radianceExpected, true)
   }
 

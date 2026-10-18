@@ -1,3 +1,33 @@
+import type { AffixPresetEntryDoc, AffixPresetGroupDoc } from '@/api/affixPreset'
+
+/**
+ * 词条库快照里的一套方案。
+ *
+ * 形状对齐 `zzz-hp-backend/scripts/export-affix-preset.mjs` 的输出、以及主数据
+ * `zzz-hp-calculator-buffs.json` 的 `affixPresets.schemes` —— 同一份文件既能被
+ * 管理页导入，也能直接喂给 `scripts/import-affix-preset.mjs`。
+ */
+export interface CalculatorBuffAffixPresetScheme {
+  name: string
+  isDefault?: boolean
+  sortOrder?: number
+  entries: AffixPresetEntryDoc[]
+  groups: AffixPresetGroupDoc[]
+}
+
+/**
+ * 词条库快照（导入 / 导出面板的第 10 类）。
+ *
+ * 与其余 9 类的区别：那些是「扁平数组 + 按 id 增量 upsert」，这份是
+ * 「方案 → 分组 + 条目」的层级结构，**导入时整份替换同名方案**。
+ */
+export interface CalculatorBuffAffixPresets {
+  kind?: string
+  exportedAt?: string
+  defaultScheme?: string
+  schemes: CalculatorBuffAffixPresetScheme[]
+}
+
 export type AdminCalculatorPanel =
   | 'agent'
   | 'wengine'
@@ -5,7 +35,10 @@ export type AdminCalculatorPanel =
   | 'drive-disc'
   | 'skill-subcategory'
   | 'skill-library'
+  | 'affix-preset'
   | 'import-export'
+  | 'nanoka'
+  | 'nanoka-buffs'
 
 export type SupportStatNeed =
   | 'hp'
@@ -126,21 +159,35 @@ export const CHARACTER_ATTR_OPTIONS: { id: CharacterAttrKey; label: string }[] =
   { id: 'level', label: '等级' },
 ]
 
+/** 转模来源：五大类技能等级（普通攻击/闪避/支援/特殊/连携终结） */
+export type SkillConvertFromKey =
+  | 'skillLevelBasic'
+  | 'skillLevelDodge'
+  | 'skillLevelAssist'
+  | 'skillLevelSpecial'
+  | 'skillLevelChainUltimate'
+
+/** 转模来源（面板属性 | 技能等级） */
+export type ConvertFromKey = CharacterAttrKey | SkillConvertFromKey
+
+export const SKILL_LEVEL_CONVERT_OPTIONS: { id: SkillConvertFromKey; label: string }[] = [
+  { id: 'skillLevelBasic', label: '普通攻击等级' },
+  { id: 'skillLevelDodge', label: '闪避等级' },
+  { id: 'skillLevelAssist', label: '支援攻击等级' },
+  { id: 'skillLevelSpecial', label: '特殊技等级' },
+  { id: 'skillLevelChainUltimate', label: '连携/终结等级' },
+]
+
+/** 转模来源下拉全集（面板属性 + 技能等级） */
+export const CONVERT_FROM_OPTIONS: { id: ConvertFromKey; label: string }[] = [
+  ...CHARACTER_ATTR_OPTIONS,
+  ...SKILL_LEVEL_CONVERT_OPTIONS,
+]
+
 export const CONVERT_PANEL_SOURCE_OPTIONS: { id: ConvertPanelSource; label: string }[] = [
   { id: 'external', label: '根据局外面板' },
   { id: 'final', label: '根据局内面板' },
   { id: 'manual', label: '自行设置' },
-]
-
-export const ANOMALY_DAMAGE_SUBKIND_OPTIONS: {
-  id: AnomalyDamageSubKind
-  label: string
-}[] = [
-  { id: 'anomaly', label: '异常伤害' },
-  { id: 'disorder', label: '紊乱伤害' },
-  { id: 'turbulence', label: '乱流伤害' },
-  { id: 'anomalyRelease', label: '异放伤害' },
-  { id: 'radiance', label: '耀变伤害' },
 ]
 
 export type BaseDamageSource = 'atk' | 'pierce' | 'def'
@@ -175,8 +222,10 @@ export interface BuffStatModifiers {
   pierce: number
   /** 贯穿增伤% */
   pierceDmgBonus: number
+  /** 锐化伤害提升%（独立乘区，仅锐化路径；锋御专属，对标命破贯穿增伤） */
+  sharpenDmgBonus: number
   /**
-   * 锐爆伤害加成%（仅锐化）：锐爆伤害 B = 1.2 + 本值/100，
+   * 锐爆伤害加成%（仅锐化）：锐爆伤害 B = 本值/100（无内置基础值），
    * 替换常规暴伤区。
    */
   sharpenCritDmgBonus: number
@@ -215,6 +264,16 @@ export interface BuffStatModifiers {
   anomalyReleaseCritDmg: number
   /** 异放倍率加算% */
   anomalyReleaseMult: number
+  /**
+   * 子类专用暴击（用户 2026-10-16：暴击按子类拆开，各子类只吃自己的字段；
+   * 属性异常用 `anomalyCrit*`、异放用 `anomalyReleaseCrit*`）。
+   */
+  turbulenceCritRate: number
+  turbulenceCritDmg: number
+  radianceCritRate: number
+  radianceCritDmg: number
+  disorderCritRate: number
+  disorderCritDmg: number
   directDmgMult: number
   /** 决算倍率%（直伤大类下的独立伤害分量，公式同直伤倍率区） */
   settlementDmgMult: number
@@ -268,10 +327,11 @@ export interface BuffStatModifiers {
 export type BuffStatKey = keyof BuffStatModifiers
 
 export interface BuffEffectConvert {
-  from: CharacterAttrKey
+  from: ConvertFromKey
   /** external/final 读面板；manual 自行设置基础值（不看面板） */
   panelSource?: ConvertPanelSource
   ratioPercent: number
+  /** 转换结果的绝对值上限；负向转换保留负号，null/缺省表示不限幅 */
   cap?: number | null
   /** 自行设置时的默认基础值；局外/局内模式下仅作兼容旧数据预填 */
   defaultBase?: number | null
@@ -290,7 +350,12 @@ export interface BuffEffect {
   id: string
   /** @deprecated 已改用效果块名称展示，仅兼容旧数据 */
   origin?: string
-  scope: BuffScope
+  /**
+   * 作用域（**数组**，多选）：成员 = `BUFF_SCOPE_OPTIONS`。
+   * 读时兼容单值字符串 / 缺省（归一化见 `normalizeBuffScopes`）；含 `general` 时其余丢弃。
+   * 结算语义：数组内**任一命中即生效**（与拆成多条单值行等价）。
+   */
+  scope: BuffScope[]
   applyTarget: BuffApplyTarget
   /** 作用情况：全局 / 失衡期 / 非失衡期，默认全局 */
   applySituation?: BuffApplySituation
@@ -338,6 +403,11 @@ export interface BuffEffect {
    * 勾选后：即使是招式类增益，异常结算也会计入。
    */
   appliesToAnomaly?: boolean
+  /**
+   * 用户侧「额外增益」的效果（2026-09-24 阶段 3 起并入统一收集）。
+   * 它没有勾选状态 —— **加入即已勾选**：`isEffectEnabled` 见到这个标志直接返回 true。
+   */
+  extraGain?: boolean
   enabledDefault?: boolean
   /** @deprecated 已改用效果块备注，仅兼容旧数据 */
   note?: string
@@ -471,6 +541,10 @@ export interface Skill {
    * 公共属性异常用这个字段按当前角色 `element` 拆条。
    */
   element?: string
+  /**
+   * 非空 = 技能组私有招式：不进招式库顶层列表，只在所属组编辑里出现。
+   */
+  ownerGroupId?: string | null
   source: SkillSource
   damageType: SkillDamageType
   /** 招式类型，多选。异常类留空 → 仅靠类型的招式限定 Buff 不命中 */
@@ -486,6 +560,52 @@ export interface Skill {
   baseMultFactor?: number
   /** 决算倍率%，仅直伤可选 */
   settlementMult?: number
+  /**
+   * 倍率来源。仅 nanoka 导入写 `'nanoka'`；管理端手建不设。
+   * 为 nanoka 时结算可按面板五大类技能等级重算 baseMult。
+   */
+  multSource?: 'nanoka' | null
+  /** nanoka L1 伤害倍率万分比整数（如 3120 → L1=31.20%） */
+  damagePercentage?: number
+  /** nanoka 每级增长（万分比整数） */
+  damagePercentageGrowth?: number
+  /**
+   * 耀变等特殊伤害跟随的五大类技能等级键（蕾米耀变用：倍率随普通攻击/支援攻击/终结等级变化）。
+   * 不给 skillTypes 填对应类型：那会经 buildSkillMatchCoords 生成「普通攻击」等 buff 匹配坐标，
+   * 让耀变错误吃到招式限定增益。缺省时仍按 skillTypes 推断。
+   */
+  radianceTalentKey?:
+    | 'basic'
+    | 'dodge'
+    | 'assist'
+    | 'special'
+    | 'chainUltimate'
+    | null
+  /** 备注：计算页招式库/准备行展示 */
+  note?: string
+}
+
+/** 技能组成员（引用招式库 skillId） */
+export interface SkillGroupMember {
+  skillId: string
+  order: number
+  /** 组定义默认段次数；流程展开时再 × FlowEntry.count */
+  count: number
+  /** 保留字段：现已一律计入流程（兼容旧数据） */
+  includeInFlow: boolean
+}
+
+/**
+ * 技能组：招式库内的编排包。准备/流程里仍是一条，结算时按 members 内部展开。
+ */
+export interface SkillGroup {
+  id: string
+  agentId: string
+  name: string
+  note?: string
+  /** 预设（管理端）或自建（浏览器）；缺省按 preset */
+  source?: SkillSource
+  members: SkillGroupMember[]
 }
 
 /** 管理端：计算时再选产生角色 */
@@ -546,6 +666,8 @@ export interface AgentBasePanel {
   def: number
   critRate: number
   critDmg: number
+  /** 初始锐爆伤害加成%（锋御）；锐爆 B = 本值/100，与初始爆伤独立 */
+  sharpenCritDmgBonus: number
   mastery: number
   /** 异常掌控（不进伤害乘区） */
   anomalyControl: number
@@ -622,6 +744,8 @@ export interface WengineBuffDoc {
   avatar_image: string | null
   note: string
   baseAtk: number
+  /** 基础防御力。锋御音擎的基础属性为防御力（非攻击力），参与局内防御力基数 */
+  baseDef?: number
   advancedStats: WengineAdvancedStats
   fixedBuffs: AgentMindscapeRankBuffs
   refinementBuffs: AgentMindscapeRankBuffs[]
@@ -665,6 +789,9 @@ export interface CalculatorBuffData {
   followUpSkillRules?: FollowUpSkillRule[]
   damageEventModes?: DamageEventMode[]
   skills?: Skill[]
+  skillGroups?: SkillGroup[]
+  /** 官方预设词条库（第 10 类；导入时整份替换同名方案，不是按 id 增量） */
+  affixPresets?: CalculatorBuffAffixPresets
   exportedAt?: string
 }
 
@@ -684,4 +811,10 @@ export interface CalculatorBuffImportSummary {
   followUpSkillRules: CalculatorBuffImportTypeSummary
   damageEventModes: CalculatorBuffImportTypeSummary
   skills: CalculatorBuffImportTypeSummary
+  skillGroups: CalculatorBuffImportTypeSummary
+  /**
+   * 词条库这一行的 created / updated 计数单位是**方案**，不是条目
+   * （整份替换语义下没有「这条条目是新增还是更新」的区分），界面上要标注。
+   */
+  affixPresets: CalculatorBuffImportTypeSummary
 }

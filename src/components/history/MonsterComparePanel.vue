@@ -14,11 +14,22 @@ import {
   fetchDeductionBossChart,
   fetchDeductionBossList,
 } from '@/api/deduction'
+import { fetchBossInfoList, lookupBossInfo, type BossInfoRecord } from '@/api/bossInfo'
+import BossPickerModal from '@/components/history/BossPickerModal.vue'
+import MonsterDetailStats, {
+  type MonsterDetailRecord,
+} from '@/components/history/MonsterDetailStats.vue'
 import { usePhaseDetailModal } from '@/composables/usePhaseDetailModal'
 import type { DefenseVariant } from '@/types/defense'
 import { modeTitles, type ModeKey } from '@/types/history'
 import type { DefenseCompareMonsterCategory } from '@/utils/defenseCompare'
+import { joinBossOptionsWithInfo } from '@/utils/bossPickerItems'
 import { resolveAssetUrl } from '@/utils/gameData'
+import {
+  ANOMALY_BAR_VERSION_MULTIPLIER_FROM,
+  isVersionAtLeast,
+  isVersionAtMost,
+} from '@/utils/monsterResistanceTable'
 import { createRequestEpoch } from '@/utils/requestEpoch'
 
 const props = defineProps<{
@@ -33,10 +44,15 @@ const crisisRoomType = ref<'normal' | 'hard'>('normal')
 const points = ref<HpChartPoint[]>([])
 const bossListLoadEpoch = createRequestEpoch()
 const bossChartLoadEpoch = createRequestEpoch()
+const bossInfoLoadEpoch = createRequestEpoch()
+const bossDetailLoadEpoch = createRequestEpoch()
 const listLoading = ref(false)
 const chartLoading = ref(false)
 const listError = ref('')
 const chartError = ref('')
+const bossInfoRecords = ref<BossInfoRecord[]>([])
+const selectedBossDetail = ref<BossInfoRecord | null>(null)
+const pickerModalOpen = ref(false)
 const { visible: detailVisible, point: detailPoint, open: openPhaseDetail, close: closePhaseDetail } =
   usePhaseDetailModal()
 
@@ -61,11 +77,79 @@ const panelDesc = computed(() => {
     : '选择正常模式 Boss（房间 1/2/3）后，查看其在各期出现时的血量、危局血量系数与相对变化'
 })
 
-const selectedBossInfo = computed(() =>
-  bossList.value.find((boss) => boss.boss_name === selectedBoss.value),
+const selectedBossItem = computed(() =>
+  pickerItems.value.find((item) => item.bossName === selectedBoss.value) ?? null,
 )
 
+const selectedBossImageUrl = computed(() => resolveAssetUrl(selectedBossItem.value?.bossImage))
+
+/** 基础异常条按敌人类别取：危局按首领、推演只选终局 Boss 也按首领，防卫战直接映射页面上的「怪物类型」 */
+const detailMonsterCategory = computed<DefenseCompareMonsterCategory>(() =>
+  isDefenseMode.value ? selectedCategory.value : 'boss',
+)
+
+/** 版本号是否可解析：`isVersionAtLeast` 对缺失 / 非法 / 不可比一律返回 false，自比成立即格式可解析 */
+function isParseableVersion(version: string | null | undefined): version is string {
+  if (!version) return false
+  return isVersionAtLeast(version, version)
+}
+
+/**
+ * 数据行的版本：**本页没有「当期」概念，取图上最新版本作为现状口径**，
+ * 供「弱点与抗性」表判「该版本 ≥ 2.1 才乘版本系数」。
+ * 不依赖 `points` 顺序（逐点用 `isVersionAtLeast` 比较取最大）；版本缺失 / 解析不出的点跳过，
+ * 全都解析不出时保持 null（表侧保守按不乘版本系数处理）。
+ */
+const chartLatestVersion = computed<string | null>(() => {
+  let latest: string | null = null
+  for (const point of points.value) {
+    const version = point.version
+    if (!isParseableVersion(version)) continue
+    if (latest === null || isVersionAtLeast(version, latest)) latest = version
+  }
+  return latest
+})
+
+/**
+ * 该 Boss 是否在 2.1（含）之前就已存在（版本系数的另一个条件）：
+ * 本页图表只画这一只 Boss，图上任一期版本 ≤ 2.1 即为真，无「出现过的期数」可筛选；
+ * 版本解析不出的点不算出现（与 `isVersionAtMost` 同口径）。
+ */
+const bossExistedByMultiplierVersion = computed(() =>
+  points.value.some((point) => isVersionAtMost(point.version, ANOMALY_BAR_VERSION_MULTIPLIER_FROM)),
+)
+
+/**
+ * 名称已在数据块上方单独展示，数据行不再重复 boss_name；
+ * 类别 / 版本 / 「2.1 前已存在」三项基础库不带，由本页按图表与选择器算出后补进数据行。
+ */
+const detailRecord = computed<MonsterDetailRecord | null>(() => {
+  if (!selectedBossDetail.value) return null
+  return {
+    ...selectedBossDetail.value,
+    boss_name: null,
+    monster_category: detailMonsterCategory.value,
+    version: chartLatestVersion.value,
+    boss_existed_by_multiplier_version: bossExistedByMultiplierVersion.value,
+  }
+})
+
+/** 换怪入口改为点击图片后必须显式提示；空态（未选择 / 无图）同样展示，避免无从下手 */
+const monsterImageChangeHint = '点击怪物图片可更换怪物'
+
 const categoryLabel = computed(() => (selectedCategory.value === 'elite' ? '精英' : 'Boss'))
+
+const bossSelectLabel = computed(() =>
+  isDeductionMode.value
+    ? '选择 Boss'
+    : isDefenseMode.value
+      ? `选择${categoryLabel.value}`
+      : crisisRoomType.value === 'hard'
+        ? '选择绝境 Boss'
+        : '选择 boss',
+)
+
+const pickerItems = computed(() => joinBossOptionsWithInfo(bossList.value, bossInfoRecords.value))
 
 async function loadBossList() {
   const token = bossListLoadEpoch.next()
@@ -126,7 +210,57 @@ async function loadBossChart() {
   }
 }
 
-onMounted(loadBossList)
+/**
+ * 拉取 boss_info 基础库全量（后端单页上限 500），按 boss_name 给选择卡片补展示字段。
+ * 加载失败只降级为卡片少字段，不阻断怪物列表与图表。
+ */
+async function loadBossInfoCatalog() {
+  const token = bossInfoLoadEpoch.next()
+  try {
+    const collected: BossInfoRecord[] = []
+    let offset = 0
+    while (offset < 2000) {
+      const result = await fetchBossInfoList({ limit: 500, offset })
+      if (!bossInfoLoadEpoch.isCurrent(token)) return
+      collected.push(...result.items)
+      offset += result.items.length
+      if (!result.items.length || offset >= result.total) break
+    }
+    bossInfoRecords.value = collected
+  } catch {
+    if (!bossInfoLoadEpoch.isCurrent(token)) return
+    bossInfoRecords.value = []
+  }
+}
+
+/** 选中怪物后拉取基础库详情用于数据块；快切时丢弃过期响应，查无记录时整块隐藏 */
+async function loadSelectedBossDetail() {
+  const bossName = selectedBoss.value
+  if (!bossName) {
+    selectedBossDetail.value = null
+    return
+  }
+
+  const token = bossDetailLoadEpoch.next()
+  try {
+    const record = await lookupBossInfo(bossName)
+    if (!bossDetailLoadEpoch.isCurrent(token)) return
+    selectedBossDetail.value = record
+  } catch {
+    if (!bossDetailLoadEpoch.isCurrent(token)) return
+    selectedBossDetail.value = null
+  }
+}
+
+function handleBossPicked(bossName: string) {
+  selectedBoss.value = bossName
+  pickerModalOpen.value = false
+}
+
+onMounted(() => {
+  loadBossList()
+  loadBossInfoCatalog()
+})
 
 watch(defenseVariant, () => {
   if (isDefenseMode.value) {
@@ -149,13 +283,14 @@ watch(crisisRoomType, () => {
 
 watch(selectedBoss, () => {
   loadBossChart()
+  loadSelectedBossDetail()
 })
 </script>
 
 <template>
   <div class="monster-compare-panel">
     <header class="panel-header">
-      <h1 class="page-title">{{ pageTitle }} · 单独怪物对比</h1>
+      <h1 class="page-title">{{ pageTitle }} · 怪物数据库</h1>
       <p class="panel-desc">{{ panelDesc }}</p>
     </header>
 
@@ -163,50 +298,30 @@ watch(selectedBoss, () => {
     <p v-else-if="listError" class="status-text error">{{ listError }}</p>
 
     <template v-else>
-      <div class="selector-toolbar" :class="{ 'selector-toolbar--defense': isDefenseMode }">
-        <div v-if="isDefenseMode" class="selector-field">
+      <div v-if="isDefenseMode" class="selector-toolbar selector-toolbar--defense">
+        <div class="selector-field">
           <label class="selector-label" for="category-select">怪物类型</label>
           <select id="category-select" v-model="selectedCategory" class="boss-select">
             <option value="elite">精英</option>
             <option value="boss">Boss</option>
           </select>
         </div>
-
-        <div class="selector-field">
-          <label class="selector-label" for="boss-select">
-            {{
-              isDeductionMode
-                ? '选择 Boss'
-                : isDefenseMode
-                  ? `选择${categoryLabel}`
-                  : crisisRoomType === 'hard'
-                    ? '选择绝境 Boss'
-                    : '选择正常 Boss'
-            }}
-          </label>
-          <div class="selector-row">
-            <img
-              v-if="selectedBossInfo?.boss_image"
-              :src="resolveAssetUrl(selectedBossInfo.boss_image)"
-              :alt="selectedBoss"
-              class="boss-thumb"
-            />
-            <select
-              id="boss-select"
-              v-model="selectedBoss"
-              class="boss-select"
-              :disabled="!bossList.length"
-            >
-              <option v-if="!bossList.length" value="">
-                暂无{{ isDeductionMode ? 'Boss' : isDefenseMode ? categoryLabel : 'Boss' }}
-              </option>
-              <option v-for="boss in bossList" :key="boss.boss_name" :value="boss.boss_name">
-                {{ boss.boss_name }}
-              </option>
-            </select>
-          </div>
-        </div>
       </div>
+
+      <p class="boss-selected-name" :class="{ 'boss-selected-name--empty': !selectedBoss }">
+        {{ selectedBoss || '未选择' }}
+      </p>
+
+      <MonsterDetailStats
+        class="monster-compare-stats"
+        :record="detailRecord"
+        :image-url="selectedBossImageUrl"
+        :image-alt="selectedBoss"
+        image-clickable
+        :show-resistance-table="true"
+        :image-hint="monsterImageChangeHint"
+        @image-click="pickerModalOpen = true"
+      />
 
       <p v-if="chartLoading" class="status-text">图表加载中...</p>
       <p v-else-if="chartError" class="status-text error">{{ chartError }}</p>
@@ -227,7 +342,17 @@ watch(selectedBoss, () => {
         :enable-boss-preview="false"
         :enable-room-buff-preview="isDefenseMode"
         :enable-hp-converted953-toggle="!isDefenseMode"
+        :page-scroll="true"
         @point-click="openPhaseDetail"
+      />
+
+      <BossPickerModal
+        :open="pickerModalOpen"
+        :items="pickerItems"
+        :title="bossSelectLabel"
+        :selected-name="selectedBoss"
+        @select="handleBossPicked"
+        @close="pickerModalOpen = false"
       />
 
       <PhaseDetailModal
@@ -245,13 +370,13 @@ watch(selectedBoss, () => {
 .monster-compare-panel {
   width: 100%;
   max-width: none;
-  height: 100%;
-  min-height: 0;
+  height: auto;
+  min-height: 100%;
   margin: 0;
   padding: 0.35rem 0.25rem 0.5rem;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   box-sizing: border-box;
 }
 
@@ -311,21 +436,6 @@ watch(selectedBoss, () => {
   color: var(--color-heading);
 }
 
-.selector-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.boss-thumb {
-  width: 48px;
-  height: 48px;
-  object-fit: contain;
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-  background: var(--color-background-soft);
-}
-
 .boss-select {
   min-width: 240px;
   padding: 0.55rem 0.75rem;
@@ -334,6 +444,37 @@ watch(selectedBoss, () => {
   background: var(--color-background-soft);
   color: var(--color-heading);
   font-size: 0.95rem;
+}
+
+.boss-selected-name {
+  min-width: 0;
+  max-width: 320px;
+  margin: 0 auto 0.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-heading);
+  text-align: center;
+}
+
+.boss-selected-name--empty {
+  font-weight: 500;
+  opacity: 0.6;
+}
+
+.monster-compare-stats {
+  flex-shrink: 0;
+  /* 与怪物详情弹窗同宽（弹窗是 min(1100px, 88vw)）：三列布局（图 21% / 数据 / 表 53%）
+     需要这个宽度才不挤，640px 会把数据列压到 ~110px */
+  width: min(1100px, 100%);
+  margin: 0 auto 0.85rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-background-soft);
+  box-sizing: border-box;
 }
 
 .status-text {
@@ -350,9 +491,12 @@ watch(selectedBoss, () => {
   opacity: 1;
 }
 
+/* `DualLineChartView` 根节点就是 `.charts-panel`：整页形态下高度必须交给内容，
+   否则 `flex: 1`/`min-height: 0` 会把图表容器压扁（与 `.charts-panel--page` 取值一致，避免层叠顺序之争） */
 .chart-view {
-  flex: 1;
-  min-height: 0;
+  flex: none;
+  min-height: auto;
+  overflow: visible;
   display: flex;
 }
 
@@ -382,14 +526,17 @@ watch(selectedBoss, () => {
     width: 100%;
   }
 
-  .selector-row {
-    width: 100%;
-    justify-content: center;
-  }
-
   .boss-select {
     min-width: 0;
     flex: 1;
+    width: 100%;
+  }
+
+  .boss-selected-name {
+    max-width: none;
+  }
+
+  .monster-compare-stats {
     width: 100%;
   }
 }

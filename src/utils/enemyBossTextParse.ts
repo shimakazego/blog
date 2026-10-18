@@ -18,17 +18,22 @@ export function extractResistanceElementsFromText(
   return found
 }
 
-/** 弱点 → -20%（weak）；抗性 → +20%（res20）；其余 normal；抗性覆盖同属性弱点 */
+/**
+ * 弱点 → -20%（weak）；抗性 → +20%（res20），其中高抗性属性 → +40%（res40）；
+ * 其余 normal；抗性覆盖同属性弱点。resistanceHigh 必须是 resistance 的子集，非子集项被忽略。
+ */
 export function parseBossTraitToElementResistance(
   weakness: string | null | undefined,
   resistance: string | null | undefined,
+  resistanceHigh?: string | null,
 ): ElementResistanceMap {
   const map = createDefaultElementResistance()
+  const highElements = new Set(extractResistanceElementsFromText(resistanceHigh))
   for (const element of extractResistanceElementsFromText(weakness)) {
     map[element] = 'weak'
   }
   for (const element of extractResistanceElementsFromText(resistance)) {
-    map[element] = 'res20'
+    map[element] = highElements.has(element) ? 'res40' : 'res20'
   }
   return map
 }

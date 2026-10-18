@@ -22,19 +22,32 @@ const draft = defineModel<{
   buffAnchorId: string
   baseMult: number
   settlementMult: number
+  note: string
 }>({ required: true })
 
-const props = defineProps<{
-  readonly?: boolean
-  anchors: SkillSubcategory[]
-  /** 用于读取「限定该锚点」的角色 Buff 固有倍率（如蕾米埃尔耀变） */
-  agent?: AgentBuffDoc | null
-  /**
-   * 已结算的最终倍率区展示（如异放倍率区 0.7120）。
-   * 选完异常强度提供者后由外部传入，优先于「等待选择」提示。
-   */
-  resolvedMultDisplay?: string | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    readonly?: boolean
+    /** 定义只读时仍可改备注（本机覆盖管理端） */
+    noteEditable?: boolean
+    anchors: SkillSubcategory[]
+    /** 用于读取「限定该锚点」的角色 Buff 固有倍率（如蕾米埃尔耀变） */
+    agent?: AgentBuffDoc | null
+    /**
+     * 已结算的最终倍率区展示（如异放倍率区 0.7120）。
+     * 选完异常强度提供者后由外部传入，优先于「等待选择」提示。
+     */
+    resolvedMultDisplay?: string | null
+    /** 管理端白底弹窗用 light；计算页默认 dark */
+    appearance?: 'dark' | 'light'
+  }>(),
+  {
+    appearance: 'dark',
+    noteEditable: false,
+  },
+)
+
+const noteFieldReadonly = computed(() => Boolean(props.readonly) && !props.noteEditable)
 
 watch(
   () => draft.value.damageType,
@@ -132,14 +145,19 @@ const baseMultPlaceholder = computed(() => {
   return '可不填'
 })
 
-/** 未填时输入框留空，不默认显 0；有结算最终倍率时优先显示（紊乱/乱流不挡在已填基础倍率前） */
+/**
+ * 基础倍率由结算/公式决定的类型（紊乱/乱流=最终倍率区；耀变=随技能等级公式）：
+ * 优先显示已结算的有效倍率，而不是招式定义里的固定 baseMult。
+ */
+function isSettledMultType(type: string): boolean {
+  return type === 'disorder' || type === 'turbulence' || type === 'radiance'
+}
+
+/** 未填时输入框留空，不默认显 0；有结算最终倍率时优先显示（紊乱/乱流/耀变不挡在已填基础倍率前） */
 const baseMultInput = computed({
   get: () => {
     const type = draft.value.damageType
-    if (
-      (type === 'disorder' || type === 'turbulence') &&
-      props.resolvedMultDisplay
-    ) {
+    if (isSettledMultType(type) && props.resolvedMultDisplay) {
       return props.resolvedMultDisplay
     }
     if (!unsetSkillMult(draft.value.baseMult)) return draft.value.baseMult
@@ -168,13 +186,10 @@ const settlementMultInput = computed({
   },
 })
 
-/** 只读：紊乱/乱流优先最终倍率区 → 填写值 → 固有 → 等待提示 */
+/** 只读：紊乱/乱流/耀变优先最终倍率区 → 填写值 → 固有 → 等待提示 */
 const readonlyBaseMultDisplay = computed(() => {
   const type = draft.value.damageType
-  if (
-    (type === 'disorder' || type === 'turbulence') &&
-    props.resolvedMultDisplay
-  ) {
+  if (isSettledMultType(type) && props.resolvedMultDisplay) {
     return props.resolvedMultDisplay
   }
   const filled = Number(draft.value.baseMult)
@@ -222,7 +237,10 @@ function toggleSkillType(id: SkillTypeId) {
 </script>
 
 <template>
-  <div class="custom-form" :class="{ 'is-readonly': readonly }">
+  <div
+    class="custom-form"
+    :class="{ 'is-readonly': readonly, 'is-light': appearance === 'light' }"
+  >
     <label>
       <span>名称</span>
       <input v-if="readonly" :value="draft.name" type="text" readonly tabindex="-1" />
@@ -288,6 +306,7 @@ function toggleSkillType(id: SkillTypeId) {
         v-else
         v-model="baseMultInput"
         type="number"
+        step="any"
         :placeholder="baseMultPlaceholder"
       />
     </label>
@@ -300,7 +319,34 @@ function toggleSkillType(id: SkillTypeId) {
         readonly
         tabindex="-1"
       />
-      <input v-else v-model="settlementMultInput" type="number" placeholder="可不填" />
+      <input
+        v-else
+        v-model="settlementMultInput"
+        type="number"
+        step="any"
+        placeholder="可不填"
+      />
+    </label>
+    <label>
+      <span>备注</span>
+      <input
+        v-if="noteFieldReadonly"
+        :value="draft.note?.trim() || '—'"
+        type="text"
+        readonly
+        tabindex="-1"
+      />
+      <input
+        v-else
+        v-model="draft.note"
+        type="text"
+        maxlength="80"
+        :placeholder="
+          noteEditable && readonly
+            ? '本机可改；未改时用管理端备注'
+            : '可选'
+        "
+      />
     </label>
   </div>
 </template>
@@ -359,5 +405,48 @@ function toggleSkillType(id: SkillTypeId) {
   margin: 0;
   color: #9aa3b0;
   font-size: 0.78rem;
+}
+:global([data-theme='light']) .custom-form label,
+:global([data-theme='light']) .type-checks,
+:global([data-theme='light']) .empty-hint {
+  color: #5a6575;
+}
+:global([data-theme='light']) .custom-form input,
+:global([data-theme='light']) .custom-form select {
+  border-color: #d7dde6;
+  background: #fff;
+  color: #2b3038;
+}
+:global([data-theme='light']) .chip {
+  border-color: #cfd6e0;
+  background: #fff;
+  color: #3a4250;
+}
+:global([data-theme='light']) .chip.active {
+  border-color: #b8923f;
+  background: #fff8ea;
+  color: #2b3038;
+}
+/* 管理端白底弹窗：不依赖 data-theme */
+.custom-form.is-light label,
+.custom-form.is-light .type-checks,
+.custom-form.is-light .empty-hint {
+  color: #5a6575;
+}
+.custom-form.is-light input,
+.custom-form.is-light select {
+  border-color: #d7dde6;
+  background: #fff;
+  color: #2b3038;
+}
+.custom-form.is-light .chip {
+  border-color: #cfd6e0;
+  background: #fff;
+  color: #3a4250;
+}
+.custom-form.is-light .chip.active {
+  border-color: #b8923f;
+  background: #fff8ea;
+  color: #2b3038;
 }
 </style>

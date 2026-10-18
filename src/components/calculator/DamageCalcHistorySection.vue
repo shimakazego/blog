@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { AgentBuffDoc } from '@/types/calculator'
-import type { DamageCalcHistoryEntry } from '@/types/damageCalcHistory'
+import type { DamageCalcHistoryEntry, DamageCalcHistoryImportResult } from '@/types/damageCalcHistory'
+import { useCalculatorBuffStore } from '@/stores/calculatorBuffs'
+import { isCustomSkillGroup } from '@/utils/skillGroup'
 import {
   batchDeleteSchemes,
   baseName,
@@ -19,6 +21,7 @@ import {
   listAllDamageCalcHistory,
   listDamageCalcHistory,
   listFolders,
+  localStorageUsageBytes,
   moveFolderTree,
   moveScheme,
   nameConflictType,
@@ -50,19 +53,26 @@ const emit = defineEmits<{
   imported: [loadedId: string]
 }>()
 
+const buffStore = useCalculatorBuffStore()
+const importMode = ref<'replace' | 'merge'>('replace')
+
 // ============ 2次确认锁 + 自定义弹窗（替代浏览器原生 confirm / prompt） ============
 const CONFIRM_KEY = 'zzz-hp-scheme-confirm'
 const confirmEnabled = ref(true)
 try {
   const cv = localStorage.getItem(CONFIRM_KEY)
   if (cv !== null) confirmEnabled.value = cv === '1'
-} catch (_) {}
+} catch {
+  /* 隐私模式 / 配额：读不到就用默认值 */
+}
 
 function toggleConfirmLock(e: Event) {
   confirmEnabled.value = (e.target as HTMLInputElement).checked
   try {
     localStorage.setItem(CONFIRM_KEY, confirmEnabled.value ? '1' : '0')
-  } catch (_) {}
+  } catch {
+    /* 写不进去不影响本次会话 */
+  }
 }
 
 interface PendingConfirm {
@@ -141,19 +151,15 @@ const openedForEventSave = ref(false)
 // ============ localStorage 占用提示（常驻显示，接近上限时弹窗顶部额外红字，不干涉保存）============
 const STORAGE_LIMIT_MB = 5
 const STORAGE_WARN_MB = 4
-const SCHEME_STORAGE_KEY = 'zzz-hp-damage-calc-history'
 
 const storageUsage = computed(() => {
   // 依赖 revision：增删改/导入后实时刷新占用
   void revision.value
-  try {
-    const raw = localStorage.getItem(SCHEME_STORAGE_KEY)
-    const bytes = raw ? raw.length * 2 : 0 // localStorage 按 UTF-16 计字节
-    const mb = bytes / (1024 * 1024)
-    return { bytes, mb, text: `${mb.toFixed(2)} / ${STORAGE_LIMIT_MB} MB` }
-  } catch {
-    return { bytes: 0, mb: 0, text: `0 / ${STORAGE_LIMIT_MB} MB` }
-  }
+  // 注意：5MB 是**整个源**的配额，不只方案库这一个 key —— 草稿、词条库、自建招式等都算在内。
+  // 所以统计全部 key，否则占用被低估、预警永远不触发（改前只算了方案库那一个 key）。
+  const bytes = localStorageUsageBytes()
+  const mb = bytes / (1024 * 1024)
+  return { bytes, mb, text: `${mb.toFixed(2)} / ${STORAGE_LIMIT_MB} MB` }
 })
 const storageWarn = computed(() => storageUsage.value.mb >= STORAGE_WARN_MB)
 
@@ -201,6 +207,14 @@ function initLoaded() {
 }
 
 // ============ 打开 / 关闭 ============
+let maskDownSelf = false
+function onMaskMouseDown(e: MouseEvent) {
+  maskDownSelf = e.target === e.currentTarget
+}
+function onMaskMouseUp(e: MouseEvent) {
+  if (maskDownSelf && e.target === e.currentTarget) closeModal()
+  maskDownSelf = false
+}
 function openModal() {
   modalOpen.value = true
   formMessage.value = ''
@@ -358,10 +372,6 @@ const currentEntries = computed(() => {
 
 function enterFolder(path: string) {
   currentFolder.value = path
-}
-
-function goUp() {
-  currentFolder.value = parentFolder(currentFolder.value)
 }
 
 // 整理模式下点击目录卡本体（非复选框、非重命名编辑中）→ 钻入该目录
@@ -616,11 +626,29 @@ function clearLoadedScheme() {
 }
 
 // ============ 导出 / 导入 ============
+function presetGroupIds(): string[] {
+  return buffStore.skillGroups.filter((item) => !isCustomSkillGroup(item)).map((item) => item.id)
+}
+
+function formatImportResult(result: DamageCalcHistoryImportResult): string {
+  if (result.errors.length) return result.errors.join('；')
+  if (result.mode === 'merge') {
+    const renameHint = result.renamed ? `（其中改名 ${result.renamed}）` : ''
+    return `已合并 ${result.added} 个方案${renameHint}；自建招式 +${result.customSkillCount}，技能组 +${result.customGroupCount}，招式换号 ${result.remappedSkills}`
+  }
+  const legacyHint = result.legacyPack ? '（旧文件不含自建招式，流程可能显示招式已删除）' : ''
+  const miss: string[] = []
+  if (result.missingSkillCount) miss.push(`${result.missingSkillCount} 条招式已删除`)
+  if (result.missingGroupCount) miss.push(`${result.missingGroupCount} 个技能组已删除`)
+  const missHint = miss.length ? `；${miss.join(' / ')}` : ''
+  return `已覆盖导入 ${result.added} 个方案、${result.customSkillCount} 条自建招式、${result.customGroupCount} 个技能组${legacyHint}${missHint}`
+}
+
 function exportAll() {
   confirmThen(
-    { title: '导出全部方案', message: '确认将当前方案库和自建招式导出为 JSON 文件？' },
+    { title: '导出全部方案', message: '确认将当前方案库、自建招式和技能组导出为 JSON 文件？' },
     () => {
-      const json = exportDamageCalcHistory()
+      const json = exportDamageCalcHistory(buffStore.skillGroups)
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -628,7 +656,11 @@ function exportAll() {
       a.download = `zzz-hp-schemes-${new Date().toISOString().slice(0, 10)}.json`
       a.click()
       URL.revokeObjectURL(url)
-      formMessage.value = '已导出全部方案和自建招式'
+      const parsed = JSON.parse(json) as { warnings?: string[] }
+      const n = parsed.warnings?.length ?? 0
+      formMessage.value = n
+        ? `已导出全部方案、自建招式和技能组（有 ${n} 条引用缺口，见文件 warnings）`
+        : '已导出全部方案、自建招式和技能组'
     },
   )
 }
@@ -638,7 +670,7 @@ function triggerImport() {
     {
       title: '导入会清空本机存档',
       message:
-        '将删除本机全部方案（含准备招式、流程）、全部自建招式，以及当前工作草稿，再用文件内容替换。主题、账号、管理端登录不受影响。请先点「导出全部」在本地存档。确定已存档并继续？',
+        '将删除本机全部方案（含准备招式、流程）、全部自建招式、自建技能组，以及当前工作草稿，再用文件内容替换。主题、账号、管理端登录不受影响。请先点「导出全部」在本地存档。确定已存档并继续？',
       danger: true,
       confirmText: '已存档，继续',
     },
@@ -646,13 +678,28 @@ function triggerImport() {
       confirmThen(
         {
           title: '再次确认导入',
-          message: '确定清空本机方案和自建招式，然后选择导入文件？',
+          message: '确定清空本机方案、自建招式和自建技能组，然后选择导入文件？',
           danger: true,
         },
         () => {
+          importMode.value = 'replace'
           fileInputRef.value?.click()
         },
       )
+    },
+  )
+}
+
+function triggerMergeImport() {
+  confirmAlways(
+    {
+      title: '合并导入',
+      message: '加到本机，不删除已有方案、自建招式和技能组。重名方案会改成「原名-复制」。',
+      confirmText: '选择文件',
+    },
+    () => {
+      importMode.value = 'merge'
+      fileInputRef.value?.click()
     },
   )
 }
@@ -661,34 +708,46 @@ function onFilePicked(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
+  const mode = importMode.value
   const reader = new FileReader()
   reader.onload = () => {
     const json = String(reader.result)
-    confirmAlways(
-      {
-        title: '用文件覆盖本机',
-        message: `即将用「${file.name}」替换本机全部方案和自建招式。此操作无法撤销。`,
-        danger: true,
-        confirmText: '覆盖导入',
-        highlight: file.name,
-      },
-      () => {
-        const result = importDamageCalcHistory(json)
-        if (result.errors.length) {
-          formMessage.value = result.errors.join('；')
-          return
-        }
-        const legacyHint = result.legacyPack
-          ? '（旧文件不含自建招式，流程可能显示招式已删除）'
-          : ''
-        formMessage.value = `已覆盖导入 ${result.added} 个方案、${result.customSkillCount} 条自建招式${legacyHint}`
-        emit('changed')
-        emit('imported', result.loadedId)
-      },
-    )
+    const run = () => {
+      const result = importDamageCalcHistory(json, {
+        mode,
+        presetGroupIds: presetGroupIds(),
+      })
+      formMessage.value = formatImportResult(result)
+      if (result.errors.length) return
+      emit('changed')
+      emit('imported', result.loadedId)
+    }
+    if (mode === 'merge') {
+      confirmAlways(
+        {
+          title: '合并导入',
+          message: `即将把「${file.name}」合并进本机。不删除已有方案。重名方案会改成「原名-复制」。`,
+          confirmText: '合并导入',
+          highlight: file.name,
+        },
+        run,
+      )
+    } else {
+      confirmAlways(
+        {
+          title: '用文件覆盖本机',
+          message: `即将用「${file.name}」替换本机全部方案、自建招式和自建技能组。此操作无法撤销。`,
+          danger: true,
+          confirmText: '覆盖导入',
+          highlight: file.name,
+        },
+        run,
+      )
+    }
   }
   reader.readAsText(file)
   input.value = ''
+  importMode.value = 'replace'
 }
 
 // ============ 过滤 / 排序 / 显示 ============
@@ -799,7 +858,8 @@ defineExpose({
       v-if="modalOpen"
       class="history-modal-overlay"
       role="presentation"
-      @click.self="closeModal"
+      @mousedown="onMaskMouseDown"
+      @mouseup="onMaskMouseUp"
     >
       <div
         class="history-modal scheme-modal"
@@ -860,6 +920,7 @@ defineExpose({
           />
           <button type="button" class="save-btn scheme-export" @click="exportAll">导出全部</button>
           <button type="button" class="save-btn scheme-import" @click="triggerImport">导入全部</button>
+          <button type="button" class="save-btn scheme-merge" @click="triggerMergeImport">合并导入</button>
           <button
             type="button"
             class="save-btn scheme-manage"
@@ -1414,6 +1475,7 @@ defineExpose({
 
 .scheme-export,
 .scheme-import,
+.scheme-merge,
 .scheme-manage,
 .scheme-mkdir {
   flex: 0 0 auto;

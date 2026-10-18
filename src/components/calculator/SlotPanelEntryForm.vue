@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import type { AgentBuffDoc, CharacterAttrKey, DriveDiscBuffDoc, WengineBuffDoc } from '@/types/calculator'
 import { CHARACTER_ATTR_OPTIONS } from '@/types/calculator'
 import {
-  createDefaultExternalPanel,
+  createEmptyExternalPanelDraft,
+  EXTERNAL_PANEL_INPUT_FIELDS,
   type AffixCounts,
   type AffixDriveDiscMainStats,
+  type ExternalPanelDraft,
+  type ExternalPanelInputKey,
   type PanelCalcMode,
   type PanelStats,
 } from '@/types/calculatorPanel'
@@ -23,6 +26,14 @@ import {
   externalConvertFieldClass,
   type ConvertSourceMark,
 } from '@/utils/panelBuffCalc'
+import {
+  SKILL_TALENT_LEVEL_KEYS,
+  SKILL_TALENT_LEVEL_LABELS,
+  clampSkillTalentLevel,
+  createDefaultSkillTalentLevels,
+  skillTalentLevelBoundsForRank,
+  type SkillTalentLevels,
+} from '@/utils/skillTalentLevels'
 
 const calcMode = defineModel<Extract<PanelCalcMode, 'panel' | 'affix'>>('calcMode', {
   default: 'panel',
@@ -33,6 +44,8 @@ const props = defineProps<{
   wengines: WengineBuffDoc[]
   driveDiscs: DriveDiscBuffDoc[]
   agentId: string
+  /** 当前槽位影画，决定技能等级上下限 */
+  agentRank?: number
   wengineId: string
   twoPieceId: string
   fourPieceId: string
@@ -40,15 +53,41 @@ const props = defineProps<{
   finalPanel?: PanelStats | null
   /** 该角色作为转模来源时的属性标记（局外/局内） */
   convertSourceMarks?: ConvertSourceMark[]
+  /** 未选代理人时禁用录入 */
+  disabled?: boolean
 }>()
 
-const externalPanel = defineModel<PanelStats>('externalPanel', {
-  default: () => createDefaultExternalPanel(),
+/**
+ * 局外面板草稿：录入项允许**留空**（null = 用户还没填），不预填占位毕业面板。
+ * 面板 Tab 用；词条 Tab 不看它。
+ */
+const externalPanel = defineModel<ExternalPanelDraft>('externalPanel', {
+  default: () => createEmptyExternalPanelDraft(),
 })
 const affixCounts = defineModel<AffixCounts>('affixCounts', { required: true })
 const affixDriveDiscMainStats = defineModel<AffixDriveDiscMainStats>('affixDriveDiscMainStats', {
   required: true,
 })
+const skillTalentLevels = defineModel<SkillTalentLevels>('skillTalentLevels', {
+  default: () => createDefaultSkillTalentLevels(),
+})
+
+const talentBounds = computed(() => skillTalentLevelBoundsForRank(props.agentRank))
+
+watch(
+  () => props.agentRank,
+  (rank) => {
+    // 影画变化：技能等级跟随新影画档位上限（语义见 dev-docs/skill-talent-level-rank-sync.md）
+    skillTalentLevels.value = createDefaultSkillTalentLevels(rank)
+  },
+)
+
+function onTalentLevelInput(key: (typeof SKILL_TALENT_LEVEL_KEYS)[number], raw: unknown) {
+  skillTalentLevels.value = {
+    ...skillTalentLevels.value,
+    [key]: clampSkillTalentLevel(Number(raw), props.agentRank),
+  }
+}
 
 const isAffixMode = computed(() => calcMode.value === 'affix')
 
@@ -75,7 +114,10 @@ const derivedExternal = computed(() =>
   }),
 )
 
-const displayPanel = computed(() => (isAffixMode.value ? derivedExternal.value : externalPanel.value))
+/** 录入项留空（清空输入框）= null，不是 0 —— 「没填」和「填了 0」是两回事 */
+function onExternalPanelInput(key: ExternalPanelInputKey, raw: string) {
+  externalPanel.value[key] = raw === '' ? null : Number(raw)
+}
 
 const driveDiscSummary = computed(() => {
   const four = props.driveDiscs.find((d) => d.id === props.fourPieceId)?.name
@@ -111,25 +153,11 @@ function fieldConvertClass(key: string, panel: 'external' | 'final') {
   return externalConvertFieldClass({ key, id: key }, convertAttrs.value)
 }
 
-const EXTERNAL_FIELDS: { key: keyof PanelStats; label: string }[] = [
-  { key: 'hp', label: '生命值' },
-  { key: 'atk', label: '攻击力' },
-  { key: 'def', label: '防御力' },
-  { key: 'critRate', label: '暴击率%' },
-  { key: 'critDmg', label: '爆伤%' },
-  { key: 'dmgBonus', label: '增伤%' },
-  { key: 'penRate', label: '穿透率%' },
-  { key: 'pen', label: '穿透值' },
-  { key: 'reduceDefense', label: '无视防御/减防%' },
-  { key: 'mastery', label: '精通' },
-  { key: 'anomalyControl', label: '异常掌控' },
-  { key: 'energyRegen', label: '能量回复效率%' },
-  { key: 'anomalyDuration', label: '异常持续时间(s)' },
-  { key: 'disorderBaseMult', label: '紊乱基础倍率%' },
-  { key: 'disorderCompMult', label: '紊乱补偿倍率%' },
-  { key: 'turbulenceBaseMult', label: '乱流基础倍率%' },
-  { key: 'turbulenceCompMult', label: '乱流补偿倍率%' },
-]
+/** 录入项清单来自类型层的单一事实来源（表单渲染与「填没填完」判定共用一份） */
+const EXTERNAL_FIELDS = EXTERNAL_PANEL_INPUT_FIELDS
+
+/** 4/5/6 主属性的「空」选项：可以什么都不选（按不提供该主属性计），默认就是空 */
+const MAIN_STAT_EMPTY_LABEL = '未选择（空）'
 
 const FINAL_FIELDS: { key: keyof PanelStats; label: string }[] = [
   { key: 'hp', label: '生命值' },
@@ -137,6 +165,7 @@ const FINAL_FIELDS: { key: keyof PanelStats; label: string }[] = [
   { key: 'def', label: '防御力' },
   { key: 'critRate', label: '暴击率%' },
   { key: 'critDmg', label: '爆伤%' },
+  { key: 'sharpenCritDmgBonus', label: '锐爆伤害%' },
   { key: 'dmgBonus', label: '增伤%' },
   { key: 'penRate', label: '穿透率%' },
   { key: 'pen', label: '穿透值' },
@@ -144,6 +173,7 @@ const FINAL_FIELDS: { key: keyof PanelStats; label: string }[] = [
   { key: 'mastery', label: '精通' },
   { key: 'anomalyControl', label: '异常掌控' },
   { key: 'energyRegen', label: '能量回复效率%' },
+  { key: 'impact', label: '冲击力' },
   { key: 'anomalyCritRate', label: '异常暴击%' },
   { key: 'anomalyCritDmg', label: '异常爆伤%' },
   { key: 'anomalyDmgBonus', label: '异常增伤%' },
@@ -154,6 +184,11 @@ const FINAL_FIELDS: { key: keyof PanelStats; label: string }[] = [
   { key: 'turbulenceDmgBonus', label: '乱流增伤%' },
 ]
 
+const visibleFinalFields = computed(() => {
+  if (agent.value?.profession === '锋御') return FINAL_FIELDS
+  return FINAL_FIELDS.filter((field) => field.key !== 'sharpenCritDmgBonus')
+})
+
 function formatValue(key: keyof PanelStats, value: number) {
   if (
     key === 'hp' ||
@@ -162,6 +197,7 @@ function formatValue(key: keyof PanelStats, value: number) {
     key === 'pen' ||
     key === 'mastery' ||
     key === 'anomalyControl' ||
+    key === 'impact' ||
     key === 'anomalyDuration'
   ) {
     return Math.round(value).toLocaleString('en-US')
@@ -171,37 +207,68 @@ function formatValue(key: keyof PanelStats, value: number) {
 </script>
 
 <template>
-  <div class="slot-panel-entry">
+  <div class="slot-panel-entry" :class="{ 'is-disabled': disabled }">
     <div class="entry-mode-row">
       <span class="entry-mode-label">录入方式</span>
       <button
         type="button"
         class="entry-mode-tab"
         :class="{ active: calcMode === 'panel' }"
+        :disabled="disabled"
         @click="calcMode = 'panel'"
       >
-        面板计算
+        面板导入
       </button>
       <button
         type="button"
         class="entry-mode-tab"
         :class="{ active: calcMode === 'affix' }"
+        :disabled="disabled"
         @click="calcMode = 'affix'"
       >
-        词条计算
+        词条导入
       </button>
-      <p class="entry-mode-hint">仅影响本导入表单，不跟随页面「计算方式」。</p>
+      <p class="entry-mode-hint">导入方式2者取其一，以最后一次点击「确认导入」时的选择作为基准的局外面板</p>
     </div>
 
-    <section v-if="isAffixMode" class="panel-block">
+    <p v-if="disabled" class="disabled-hint">请先在「角色」Tab 选择代理人后再录入面板。</p>
+
+    <section class="panel-block">
+      <header class="panel-block-header">
+        <h3>技能等级</h3>
+      </header>
+      <div class="grid five">
+        <label v-for="key in SKILL_TALENT_LEVEL_KEYS" :key="key" class="field">
+          <span>{{ SKILL_TALENT_LEVEL_LABELS[key] }}</span>
+          <input
+            :value="skillTalentLevels[key]"
+            type="number"
+            :min="talentBounds.min"
+            :max="talentBounds.max"
+            step="1"
+            :disabled="disabled"
+            @change="onTalentLevelInput(key, ($event.target as HTMLInputElement).value)"
+          />
+        </label>
+      </div>
+    </section>
+
+    <section class="panel-block">
       <header class="panel-block-header">
         <h3>驱动盘主属性</h3>
-        <p>{{ driveDiscSummary }} · 1 号盘固定生命 {{ AFFIX_DRIVE_DISC_SLOT_1_HP }}，2 号盘固定攻击 {{ AFFIX_DRIVE_DISC_SLOT_2_ATK }}</p>
+        <p>
+          {{ driveDiscSummary }} · 1 号盘固定生命 {{ AFFIX_DRIVE_DISC_SLOT_1_HP }}，2 号盘固定攻击
+          {{ AFFIX_DRIVE_DISC_SLOT_2_ATK }}
+          <template v-if="!isAffixMode">
+            · 面板导入也可填写；不参与局外数字计算，写入后供词条分析（上限 / 组合试算）使用，可留空
+          </template>
+        </p>
       </header>
       <div class="grid four">
         <label class="field">
           <span>4 号盘主属性</span>
-          <select v-model="affixDriveDiscMainStats.slot4MainStat">
+          <select v-model="affixDriveDiscMainStats.slot4MainStat" :disabled="disabled">
+            <option value="">{{ MAIN_STAT_EMPTY_LABEL }}</option>
             <option v-for="option in DRIVE_DISC_SLOT_4_OPTIONS" :key="option.id" :value="option.id">
               {{ option.label }}
             </option>
@@ -209,7 +276,8 @@ function formatValue(key: keyof PanelStats, value: number) {
         </label>
         <label class="field">
           <span>5 号盘主属性</span>
-          <select v-model="affixDriveDiscMainStats.slot5MainStat">
+          <select v-model="affixDriveDiscMainStats.slot5MainStat" :disabled="disabled">
+            <option value="">{{ MAIN_STAT_EMPTY_LABEL }}</option>
             <option v-for="option in DRIVE_DISC_SLOT_5_OPTIONS" :key="option.id" :value="option.id">
               {{ option.label }}
             </option>
@@ -217,7 +285,8 @@ function formatValue(key: keyof PanelStats, value: number) {
         </label>
         <label class="field">
           <span>6 号盘主属性</span>
-          <select v-model="affixDriveDiscMainStats.slot6MainStat">
+          <select v-model="affixDriveDiscMainStats.slot6MainStat" :disabled="disabled">
+            <option value="">{{ MAIN_STAT_EMPTY_LABEL }}</option>
             <option v-for="option in DRIVE_DISC_SLOT_6_OPTIONS" :key="option.id" :value="option.id">
               {{ option.label }}
             </option>
@@ -235,7 +304,13 @@ function formatValue(key: keyof PanelStats, value: number) {
       <div class="grid four">
         <label v-for="field in AFFIX_COUNT_FIELDS" :key="field.key" class="field">
           <span>{{ field.label }}（{{ field.unitLabel }}）</span>
-          <input v-model.number="affixCounts[field.key]" type="number" min="0" step="1" />
+          <input
+            v-model.lazy.number="affixCounts[field.key]"
+            type="number"
+            min="0"
+            step="1"
+            :disabled="disabled"
+          />
           <span class="field-hint">每条 +{{ field.perCount }}</span>
         </label>
       </div>
@@ -252,7 +327,7 @@ function formatValue(key: keyof PanelStats, value: number) {
           {{
             isAffixMode
               ? '由词条数、驱动盘与角色/音擎基础属性自动计算，只读预览。'
-              : '手填当前槽位局外面板，不含战斗增益。'
+              : '手填当前槽位局外面板，不含战斗增益；未填项按角色初始面板填充。'
           }}
           <template v-if="convertAttrs.external.size"> 实线绿框为局外转模来源。</template>
           <template v-if="convertAttrs.final.size"> 虚线绿框为局内转模对应的局外属性。</template>
@@ -268,18 +343,23 @@ function formatValue(key: keyof PanelStats, value: number) {
           class="field"
           :class="fieldConvertClass(field.key, 'external')"
         >
-          <span>{{ field.label }}</span>
+          <span>
+            {{ field.label }}<em v-if="field.hint" class="field-example">{{ field.hint }}</em>
+          </span>
           <input
             v-if="!isAffixMode"
-            v-model.number="externalPanel[field.key]"
+            :value="externalPanel[field.key]"
             type="number"
             step="any"
+            :disabled="disabled"
+            @input="onExternalPanelInput(field.key, ($event.target as HTMLInputElement).value)"
           />
           <input
             v-else
-            :value="formatValue(field.key, displayPanel[field.key])"
+            :value="formatValue(field.key, derivedExternal[field.key])"
             type="text"
             readonly
+            :disabled="disabled"
           />
         </label>
       </div>
@@ -296,7 +376,7 @@ function formatValue(key: keyof PanelStats, value: number) {
       <p v-if="!finalPanel" class="hint">暂无局内结果，录入局外或确认增益后可在此查看。</p>
       <div v-else class="grid four">
         <label
-          v-for="field in FINAL_FIELDS"
+          v-for="field in visibleFinalFields"
           :key="field.key"
           class="field"
           :class="fieldConvertClass(field.key, 'final')"
@@ -316,43 +396,25 @@ function formatValue(key: keyof PanelStats, value: number) {
   gap: 0.75rem;
 }
 
-.entry-mode-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem 0.55rem;
+.slot-panel-entry.is-disabled {
+  opacity: 0.55;
 }
 
-.entry-mode-label {
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: #c9a55c;
-}
-
-.entry-mode-tab {
-  appearance: none;
-  border: 1px solid #343a44;
-  border-radius: 8px;
-  background: #12161d;
-  color: #9aa3b0;
-  padding: 0.28rem 0.7rem;
-  font: inherit;
-  font-size: 0.76rem;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.entry-mode-tab.active {
-  border-color: #c9a55c;
-  background: rgba(201, 165, 92, 0.16);
-  color: #f0d7a2;
-}
-
-.entry-mode-hint {
+.disabled-hint {
   margin: 0;
-  font-size: 0.72rem;
-  color: #8f96a3;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  border: 1px dashed #3a4250;
+  background: #14181f;
+  color: #9aa3b0;
+  font-size: 0.78rem;
 }
+
+/*
+ * 「录入方式」按钮（.entry-mode-*）的样式已提为**全站唯一来源**：
+ * `src/assets/entryModeTabs.css`（弹窗 Teleport 到 body，scoped 样式跨不过去；
+ * 白天主题也在那份里用 :where([data-theme='light']) 覆盖）。这里不要再写一份。
+ */
 
 .panel-block {
   border: 1px solid #2d323a;
@@ -387,10 +449,31 @@ function formatValue(key: keyof PanelStats, value: number) {
   color: #b7c98a;
 }
 
+/* 录入项后面的填写示例：与灰色 label 区分开的强调色（白天主题另有一档） */
+.field-example {
+  margin-left: 0.25rem;
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #ffd479;
+}
+
 .grid.four {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.55rem 0.65rem;
+}
+
+.grid.five {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.55rem 0.65rem;
+}
+
+@media (max-width: 720px) {
+  .grid.five {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .field {

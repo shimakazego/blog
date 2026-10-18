@@ -22,6 +22,7 @@ import {
   buildRemielSpecialLevelZoneGroups,
   buildRemielStandardLevelZoneGroups,
   buildResistanceZoneProcessItems,
+  buildSharpenDmgZoneProcessItems,
 } from '@/utils/zoneSourceTips'
 import { formatCalcDecimal } from '@/utils/calcNumberFormat'
 import {
@@ -32,6 +33,7 @@ import {
 import {
   buildAlignedDirectFormulaGroup,
   buildDirectDamageExpectedProcessItems,
+  buildSharpenCritZoneLines,
   formatDirectDmgMultZoneFormula,
   formatSettlementDmgMultZoneFormula,
 } from '@/utils/directDamageDisplay'
@@ -83,6 +85,8 @@ const props = defineProps<{
   bonusFinalPanel?: PanelStats
   bonusExternalPanel?: PanelStats
   bonusSources?: BuffModSource[]
+  /** 耀变倍率来源标注（招式 · 等级公式，如「普通攻击 Lv.16：200% + 10% × 16 = 360%」） */
+  skillMultLevelNote?: string | null
   /** 减防/无视防御 tip（紊乱/乱流等：异常类触发者；缺省时属性异常/异放/耀变回落 bonus） */
   defenseTriggerFinalPanel?: PanelStats
   defenseTriggerExternalPanel?: PanelStats
@@ -91,11 +95,6 @@ const props = defineProps<{
 }>()
 
 const anomalySubKind = computed(() => props.anomalySubKind ?? 'anomaly')
-
-function round(v: number, p = 2) {
-  const f = 10 ** p
-  return Math.round(v * f) / f
-}
 
 function formatNumber(v: number) {
   return Math.round(v).toLocaleString('en-US')
@@ -183,19 +182,6 @@ const disorderFormulaParts = computed(() => {
   ]
 })
 
-const turbulenceFormulaParts = computed(() => {
-  const p = props.calcParts
-  const parts = [
-    formatNumber(anomalyBaseWithMutation.value),
-    formatFormulaNumber(p.turbulenceZone),
-    formatFormulaNumber(p.turbulenceCombinedDmgBonusZone),
-  ]
-  if (p.turbulenceUsesAnomalyCrit) {
-    parts.push(formatFormulaNumber(p.anomalyCritZone))
-  }
-  return parts
-})
-
 type ValueTipsKey =
   | 'baseDamage'
   | 'dmgMultiplier'
@@ -223,7 +209,8 @@ type ValueTipsKey =
   | 'anomalyCritZone'
   | 'anomalyReleaseCombinedDmgBonusZone'
   | 'anomalyReleaseMultZone'
-  | 'anomalyCombinedCritZone'
+  // 「异常综合暴击区」已删除 → 异放用自己的暴击区（用户 2026-10-16）
+  | 'anomalyReleaseCritZone'
   | 'disorderBaseMult'
   | 'anomalyDuration'
   | 'disorderCompMult'
@@ -244,6 +231,7 @@ type ValueTipsKey =
   | 'radianceMultZone'
   | 'mutationZone'
   | 'pierceDmgMultiplier'
+  | 'sharpenDmgMultiplier'
   | 'remielSelfInCombatAtk'
   | 'remielSelfInCombatMasteryZone'
   | 'remielSelfSpecialLevelZone'
@@ -358,7 +346,7 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
           label: props.producerAgentLabel ?? '异常强度提供者',
           items: usesProducerMult
             ? [
-                '异常基础乘区（含通用增伤区）、紊乱/乱流倍率与持续时间取异常强度提供者；类型增伤（紊乱/乱流增伤）与异常暴击取招式持有者；减防/无视取异常类触发者',
+                '异常基础乘区（含通用增伤区）、紊乱/乱流倍率与持续时间取异常强度提供者；类型增伤（紊乱/乱流增伤）与异常暴击取异常类触发者；减防/无视取异常类触发者',
               ]
             : sub === 'radiance'
               ? [
@@ -371,7 +359,7 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
       ]
     : []
 
-  // 类型增伤/倍率/暴击：属性异常/异放/耀变→异常类触发者；紊乱/乱流→招式持有者
+  // 类型增伤/倍率/暴击：全部异常子类（属性异常/异放/耀变/紊乱/乱流）→异常类触发者
   const bonusPanel = props.bonusFinalPanel ?? ownerPanel
   const bonusExternal = props.bonusExternalPanel ?? ownerExternal
   const bonusSources = props.bonusSources ?? ownerSources
@@ -710,13 +698,35 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
       `局内暴击 ${formatFormulaNumber(panel.critRate, 2)}% = ${formatFormulaNumber(p.critRateRatio)}（计入上限）`,
     ),
     critMultiplier: withTotal(
-      buildStatSourceGroups({
-        keys: ['critRate', 'critDmg'],
-        externalPanel: external,
-        sources,
-        finalValues: { critRate: panel.critRate, critDmg: panel.critDmg },
-      }),
-      `暴击区 1 + ${formatFormulaNumber(p.critRateRatio)} × ${formatFormulaNumber(p.critDmgRatio)} = ${formatFormulaNumber(p.critMultiplier)}`,
+      p.useSharpenFormula
+        ? [
+            // 锐爆区口径与常规暴击区不同：不用常规暴伤，改用锐爆伤害加成
+            ...buildStatSourceGroups({
+              keys: ['critRate'],
+              externalPanel: external,
+              sources,
+              finalValues: { critRate: panel.critRate },
+            }),
+            ...buildStatSourceGroups({
+              keys: ['sharpenCritDmgBonus'],
+              externalPanel: external,
+              sources,
+              externalKeyMap: { sharpenCritDmgBonus: null },
+            }),
+            {
+              label: '锐爆区计算过程',
+              items: buildSharpenCritZoneLines(p, formatFormulaNumber),
+            },
+          ]
+        : buildStatSourceGroups({
+            keys: ['critRate', 'critDmg'],
+            externalPanel: external,
+            sources,
+            finalValues: { critRate: panel.critRate, critDmg: panel.critDmg },
+          }),
+      p.useSharpenFormula
+        ? `锐爆区 = ${formatFormulaNumber(p.critMultiplier)}（B = ${formatFormulaNumber(p.sharpenCritDmgRatio, 4)}，暴击率上限 200%，不乘常规暴伤）`
+        : `暴击区 1 + ${formatFormulaNumber(p.critRateRatio)} × ${formatFormulaNumber(p.critDmgRatio)} = ${formatFormulaNumber(p.critMultiplier)}`,
     ),
     specialMultiplier: withTotal(
       [
@@ -763,6 +773,28 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         active: p.baseDamageSource === 'pierce',
         bonusPercent: Math.max(0, (p.pierceDmgMultiplier - 1) * 100),
         zone: p.pierceDmgMultiplier,
+      }),
+    ),
+    sharpenDmgMultiplier: withTotal(
+      [
+        {
+          label: '乘区说明',
+          items: p.useSharpenFormula
+            ? ['锐化路径（锋御职业或招式伤害类型为锐化），锐化伤害提升作为独立乘区生效']
+            : ['非锐化路径，锐化伤害提升区固定为 1'],
+        },
+        ...buildStatSourceGroups({
+          keys: ['sharpenDmgBonus'],
+          externalPanel: external,
+          sources,
+          externalKeyMap: { sharpenDmgBonus: null },
+        }),
+      ],
+      `锐化伤害提升区 ${formatFormulaNumber(p.sharpenDmgMultiplier)}`,
+      buildSharpenDmgZoneProcessItems({
+        active: p.useSharpenFormula,
+        bonusPercent: Math.max(0, (p.sharpenDmgMultiplier - 1) * 100),
+        zone: p.sharpenDmgMultiplier,
       }),
     ),
     directDmgMultZone: withTotal(
@@ -860,11 +892,13 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         label: '乘区组成',
         items: [
           `通用乘区 ${directFormulaParts.value[0]}`,
-          `暴击区 ${directFormulaParts.value[1]}`,
+          `${p.useSharpenFormula ? '锐爆区' : '暴击区'} ${directFormulaParts.value[1]}`,
           `特殊乘区 ${directFormulaParts.value[2]}`,
-          ...(p.baseDamageSource === 'pierce'
-            ? [`贯穿增伤区 ${formatFormulaNumber(p.pierceDmgMultiplier)}`]
-            : []),
+          ...(p.useSharpenFormula
+            ? [`锐化伤害提升区 ${formatFormulaNumber(p.sharpenDmgMultiplier)}`]
+            : p.baseDamageSource === 'pierce'
+              ? [`贯穿增伤区 ${formatFormulaNumber(p.pierceDmgMultiplier)}`]
+              : []),
           `直伤倍率区 ${formatFormulaNumber(p.directDmgMultZone)} → 直伤分量 ${formatNumber(p.directDamageFromDirectMult)}`,
           ...(p.settlementDmgMultZone > 0
             ? [
@@ -962,22 +996,21 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         `= ${formatFormulaNumber(p.anomalyReleaseMultZone)}`,
       ],
     ),
-    anomalyCombinedCritZone: withTotal(
+    // 「异常综合暴击区」已删除（用户 2026-10-16：暴击按子类拆开，异放只吃自己的暴击字段）
+    anomalyReleaseCritZone: withTotal(
       buildStatSourceGroups({
-        keys: ['anomalyCritRate', 'anomalyCritDmg', 'anomalyReleaseCritRate', 'anomalyReleaseCritDmg'],
+        keys: ['anomalyReleaseCritRate', 'anomalyReleaseCritDmg'],
         externalPanel: bonusExternal,
         sources: bonusSources,
         finalValues: {
-          anomalyCritRate: bonusPanel.anomalyCritRate,
-          anomalyCritDmg: bonusPanel.anomalyCritDmg,
           anomalyReleaseCritRate: bonusPanel.anomalyReleaseCritRate,
           anomalyReleaseCritDmg: bonusPanel.anomalyReleaseCritDmg,
         },
       }),
       [
-        `暴击率=0：异常综合暴击区 = 1`,
-        `暴击率=1：异常综合暴击区 = 1 + ${formatFormulaNumber(p.anomalyCombinedCritDmgRatio)} = ${formatFormulaNumber(p.anomalyCombinedFullCritZone)}`,
-        `实际期望：1 + ${formatFormulaNumber(p.anomalyCombinedCritRateRatio)} × ${formatFormulaNumber(p.anomalyCombinedCritDmgRatio)} = ${formatFormulaNumber(p.anomalyCombinedCritZone)}`,
+        `暴击率=0：异放暴击区 = 1`,
+        `暴击率=1：异放暴击区 = 1 + ${formatFormulaNumber(p.anomalyReleaseCritDmgRatio ?? 0)} = ${formatFormulaNumber(p.anomalyReleaseFullCritZone)}`,
+        `实际期望：1 + ${formatFormulaNumber(p.anomalyReleaseCritRateRatio ?? 0)} × ${formatFormulaNumber(p.anomalyReleaseCritDmgRatio ?? 0)} = ${formatFormulaNumber(p.anomalyReleaseCritZone)}`,
       ].join('；'),
     ),
     anomalyCritZone: withTotal(
@@ -1136,7 +1169,8 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
           `紊乱基础倍率 ${formatFormulaNumber(p.disorderBaseMultRatio)}`,
           `有效异常持续时间 ${formatFormulaNumber(p.effectiveAnomalyDuration)}`,
           `紊乱补偿倍率 ${formatFormulaNumber(p.disorderCompMultRatio)}`,
-          `紊乱倍率区 = 基础 + 时间 × 补偿 = ${formatFormulaNumber(p.disorderZone)}`,
+          `倍率修正 ${formatFormulaNumber(p.disorderMultFactor * 100, 2)}% → ×${formatFormulaNumber(p.disorderMultFactor)}`,
+          `紊乱倍率区 = (基础 + 时间 × 补偿) × 修正 = ${formatFormulaNumber(p.disorderZone)}`,
         ],
       },
       {
@@ -1145,7 +1179,7 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         items: [
           `基础 ${formatFormulaNumber(p.disorderBaseMultRatio)}`,
           `时间项 ${formatFormulaNumber(p.effectiveAnomalyDuration)} × ${formatFormulaNumber(p.disorderCompMultRatio)} = ${formatFormulaNumber(p.effectiveAnomalyDuration * p.disorderCompMultRatio)}`,
-          `${formatFormulaNumber(p.disorderBaseMultRatio)} + ${formatFormulaNumber(p.effectiveAnomalyDuration * p.disorderCompMultRatio)} = ${formatFormulaNumber(p.disorderZone)}`,
+          `(${formatFormulaNumber(p.disorderBaseMultRatio)} + ${formatFormulaNumber(p.effectiveAnomalyDuration * p.disorderCompMultRatio)}) × ${formatFormulaNumber(p.disorderMultFactor)} = ${formatFormulaNumber(p.disorderZone)}`,
         ],
       },
     ],
@@ -1209,7 +1243,8 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
           `乱流基础倍率 ${formatFormulaNumber(p.turbulenceBaseMultRatio)}`,
           `有效异常持续时间 ${formatFormulaNumber(p.effectiveAnomalyDuration)}`,
           `乱流补偿倍率 ${formatFormulaNumber(p.turbulenceCompMultRatio)}`,
-          `乱流倍率区 = 基础 + 时间 × 补偿 = ${formatFormulaNumber(p.turbulenceZone)}`,
+          `倍率修正 ${formatFormulaNumber(p.turbulenceMultFactor * 100, 2)}% → ×${formatFormulaNumber(p.turbulenceMultFactor)}`,
+          `乱流倍率区 = (基础 + 时间 × 补偿) × 修正 = ${formatFormulaNumber(p.turbulenceZone)}`,
         ],
       },
       {
@@ -1218,28 +1253,27 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         items: [
           `基础 ${formatFormulaNumber(p.turbulenceBaseMultRatio)}`,
           `时间项 ${formatFormulaNumber(p.effectiveAnomalyDuration)} × ${formatFormulaNumber(p.turbulenceCompMultRatio)} = ${formatFormulaNumber(p.effectiveAnomalyDuration * p.turbulenceCompMultRatio)}`,
-          `${formatFormulaNumber(p.turbulenceBaseMultRatio)} + ${formatFormulaNumber(p.effectiveAnomalyDuration * p.turbulenceCompMultRatio)} = ${formatFormulaNumber(p.turbulenceZone)}`,
+          `(${formatFormulaNumber(p.turbulenceBaseMultRatio)} + ${formatFormulaNumber(p.effectiveAnomalyDuration * p.turbulenceCompMultRatio)}) × ${formatFormulaNumber(p.turbulenceMultFactor)} = ${formatFormulaNumber(p.turbulenceZone)}`,
         ],
       },
     ],
-    turbulenceCombinedDmgBonusZone: [
-      {
-        label: '乘区组成',
-        items: [
-          `乱流增伤区 ${formatFormulaNumber(p.turbulenceDmgBonusZone)}`,
-          `异常增伤区 ${formatFormulaNumber(p.anomalyDmgBonusZone)}`,
-          `乱流增伤区+异常增伤区 ${formatFormulaNumber(p.turbulenceCombinedDmgBonusZone)}`,
-        ],
-      },
-      {
-        label: '加减过程',
-        fullWidth: true,
-        items: [
-          `1 + ${formatFormulaNumber(bonusPanel.turbulenceDmgBonus, 2)}% + ${formatFormulaNumber(bonusPanel.anomalyDmgBonus, 2)}%`,
-          `= ${formatFormulaNumber(p.turbulenceCombinedDmgBonusZone)}`,
-        ],
-      },
-    ],
+    turbulenceCombinedDmgBonusZone: withTotal(
+      buildStatSourceGroups({
+        keys: ['turbulenceDmgBonus', 'anomalyDmgBonus'],
+        externalPanel: bonusExternal,
+        sources: bonusSources,
+        finalValues: {
+          turbulenceDmgBonus: bonusPanel.turbulenceDmgBonus,
+          anomalyDmgBonus: bonusPanel.anomalyDmgBonus,
+        },
+      }),
+      `乱流增伤区+异常增伤区 1 + ${formatFormulaNumber(bonusPanel.turbulenceDmgBonus, 2)}% + ${formatFormulaNumber(bonusPanel.anomalyDmgBonus, 2)}% = ${formatFormulaNumber(p.turbulenceCombinedDmgBonusZone)}`,
+      [
+        `乱流增伤 ${formatFormulaNumber(bonusPanel.turbulenceDmgBonus, 2)}%`,
+        `异常增伤 ${formatFormulaNumber(bonusPanel.anomalyDmgBonus, 2)}%`,
+        `1 + ${formatFormulaNumber(bonusPanel.turbulenceDmgBonus, 2)}% + ${formatFormulaNumber(bonusPanel.anomalyDmgBonus, 2)}% = ${formatFormulaNumber(p.turbulenceCombinedDmgBonusZone)}`,
+      ],
+    ),
     turbulenceExpected: [
       {
         label: '乘区组成',
@@ -1259,9 +1293,10 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
           `异常基础期望 ${formatNumber(anomalyBaseWithMutation.value)}`,
           `异放综合增伤区 ${formatFormulaNumber(p.anomalyReleaseCombinedDmgBonusZone)}（异放增伤+异常增伤）`,
           `异放倍率区 ${formatFormulaNumber(p.anomalyReleaseMultZone)}`,
-          `异常综合暴击区 = 1 + (${formatFormulaNumber(p.anomalyCombinedCritRateRatio)} × ${formatFormulaNumber(p.anomalyCombinedCritDmgRatio)})`,
+          // 异放只吃自己的暴击字段（用户 2026-10-16；「异常综合暴击区」已删）
+          `异放暴击区 = 1 + (${formatFormulaNumber(p.anomalyReleaseCritRateRatio ?? 0)} × ${formatFormulaNumber(p.anomalyReleaseCritDmgRatio ?? 0)})`,
           `暴击率=0 → ${formatNumber(p.anomalyReleaseExpectedNoCrit)}`,
-          `暴击率=1（区 ${formatFormulaNumber(p.anomalyCombinedFullCritZone)}）→ ${formatNumber(p.anomalyReleaseExpectedFullCrit)}`,
+          `暴击率=1（区 ${formatFormulaNumber(p.anomalyReleaseFullCritZone)}）→ ${formatNumber(p.anomalyReleaseExpectedFullCrit)}`,
         ],
       },
     ],
@@ -1323,16 +1358,22 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
       ]
     })(),
     radianceMultZone: withTotal(
-      buildStatSourceGroups({
-        keys: ['radianceMult', 'radianceMultFactor'],
-        externalPanel: bonusExternal,
-        sources: bonusSources,
-        externalKeyMap: { radianceMult: null, radianceMultFactor: null },
-        finalValues: {
-          radianceMult: bonusPanel.radianceMult,
-          radianceMultFactor: bonusPanel.radianceMultFactor,
-        },
-      }),
+      [
+        // 招式倍率来源（等级公式）：让「360% 怎么来的」在数值组成里可追溯（用户口径 2026-09-16）
+        ...(props.skillMultLevelNote
+          ? [{ label: '招式倍率来源', items: [props.skillMultLevelNote] }]
+          : []),
+        ...buildStatSourceGroups({
+          keys: ['radianceMult', 'radianceMultFactor'],
+          externalPanel: bonusExternal,
+          sources: bonusSources,
+          externalKeyMap: { radianceMult: null, radianceMultFactor: null },
+          finalValues: {
+            radianceMult: bonusPanel.radianceMult,
+            radianceMultFactor: bonusPanel.radianceMultFactor,
+          },
+        }),
+      ],
       `耀变倍率区 max(0, ${formatFormulaNumber(bonusPanel.radianceMult, 2)}%) × 修正 ${formatFormulaNumber(bonusPanel.radianceMultFactor ?? 100, 2)}% = ${formatFormulaNumber(p.radianceMultZone)}`,
       [
         `加算 ${formatFormulaNumber(bonusPanel.radianceMult, 2)}% → ${formatFormulaNumber(Math.max(0, bonusPanel.radianceMult / 100))}`,
@@ -1419,14 +1460,14 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
             :key="`general-${term.label}`"
           >
             <span v-if="index > 0" class="formula-aligned-op" aria-hidden="true">×</span>
-            <div class="formula-aligned-term">
+            <div class="formula-aligned-term formula-aligned-term--inline">
               <span class="formula-aligned-term-label">{{ term.label }}</span>
               <span class="formula-aligned-term-value">
                 <StatValueWithSources :value="term.value" :groups="valueTips[term.tipsKey]" />
               </span>
             </div>
           </template>
-          <span class="formula-aligned-op" aria-hidden="true">=</span>
+          <span class="formula-aligned-op" aria-hidden="true">→</span>
           <div class="formula-aligned-result">
             <StatValueWithSources
               :value="alignedGeneralFormula.result"
@@ -1455,8 +1496,8 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
         />
       </div>
       <div class="result-grid">
-        <p>暴击率（计入上限 1）：<StatValueWithSources :value="calcParts.critRateRatio" :groups="valueTips.critRateRatio" /></p>
-        <p>暴击区：<StatValueWithSources :value="calcParts.critMultiplier" :groups="valueTips.critMultiplier" /></p>
+        <p>暴击率（计入上限 {{ calcParts.useSharpenFormula ? '2' : '1' }}）：<StatValueWithSources :value="calcParts.critRateRatio" :groups="valueTips.critRateRatio" /></p>
+        <p>{{ calcParts.useSharpenFormula ? '锐爆区' : '暴击区' }}：<StatValueWithSources :value="calcParts.critMultiplier" :groups="valueTips.critMultiplier" /></p>
         <p>特殊乘区（含增益）：<StatValueWithSources :value="calcParts.specialMultiplier" :groups="valueTips.specialMultiplier" /></p>
         <p>直伤倍率区：<StatValueWithSources :value="calcParts.directDmgMultZone" :groups="valueTips.directDmgMultZone" /></p>
         <p v-if="calcParts.settlementDmgMultZone > 0">
@@ -1492,7 +1533,7 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
                 </span>
               </div>
             </template>
-            <span class="formula-aligned-op" aria-hidden="true">=</span>
+            <span class="formula-aligned-op" aria-hidden="true">→</span>
             <div v-if="group.dualResults?.length" class="formula-aligned-dual">
               <div
                 v-for="item in group.dualResults"
@@ -1574,15 +1615,15 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
           />
         </p>
         <p>
-          异常综合暴击区公式：1 + ({{ formatFormulaNumber(calcParts.anomalyCombinedCritRateRatio) }})
-          × ({{ formatFormulaNumber(calcParts.anomalyCombinedCritDmgRatio) }})
+          异放暴击区公式：1 + ({{ formatFormulaNumber(calcParts.anomalyReleaseCritRateRatio ?? 0) }})
+          × ({{ formatFormulaNumber(calcParts.anomalyReleaseCritDmgRatio ?? 0) }})
         </p>
-        <p>异常综合暴击区（暴击率=0）：1</p>
+        <p>异放暴击区（暴击率=0）：1</p>
         <p>
-          异常综合暴击区（暴击率=1）：
+          异放暴击区（暴击率=1）：
           <StatValueWithSources
-            :value="formatFormulaNumber(calcParts.anomalyCombinedFullCritZone)"
-            :groups="valueTips.anomalyCombinedCritZone"
+            :value="formatFormulaNumber(calcParts.anomalyReleaseFullCritZone)"
+            :groups="valueTips.anomalyReleaseCritZone"
           />
         </p>
         <p class="result-total">
@@ -1636,80 +1677,89 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
   flex-direction: column;
 }
 
+/* ===== 标题层：墨色、字重对比（editorial 风格） ===== */
 .result-section-title {
-  margin: 0.85rem 0 0.45rem;
-  font-size: 0.88rem;
-  color: #e8d4a8;
+  margin: 0.9rem 0 0.5rem;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--calc-text, #1c212a);
+  letter-spacing: 0.01em;
 }
 
 .result-section-title:first-child {
-  margin-top: 0;
+  margin-top: 0.1rem;
 }
 
 .result-subsection-title {
   grid-column: 1 / -1;
-  margin: 0.65rem 0 0.15rem;
+  margin: 0.75rem 0 0.25rem;
   font-size: 0.82rem;
-  color: #c9a55c;
-  font-weight: 600;
+  font-weight: 700;
+  color: var(--calc-text, #1c212a);
 }
 
 .result-subsection-title:first-child {
   margin-top: 0;
 }
 
+/* ===== 公式卡片：白底 + 1px 细边框 + 大方角；宽度按内容自适应（右端不撑满） ===== */
 .formula-block {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  margin: 0.35rem 0 0.55rem;
-  padding: 0.65rem 0.75rem;
-  border: 1px solid #2d323a;
-  border-radius: 10px;
-  background: #0f1217;
+  margin: 0.35rem 0 0.6rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--calc-border, #d5dae3);
+  border-radius: 8px;
+  background: var(--calc-surface-2, #f1efe9);
+  width: fit-content;
+  max-width: 100%;
 }
 
 .formula-label {
   display: inline-block;
   min-width: 6.5em;
-  margin-right: 0.45rem;
-  color: #e8d4a8;
-  font-weight: 600;
+  margin-right: 0.22rem;
+  color: var(--calc-text, #1c212a);
+  font-weight: 700;
 }
 
 .formula-block--aligned {
   gap: 0;
 }
 
+/* 公式组：左 label 列 + 右公式行，垂直居中（列间距收紧） */
 .formula-aligned-group {
   display: grid;
   grid-template-columns: 6.95em minmax(0, 1fr);
-  gap: 0.35rem 0.45rem;
-  padding: 0.55rem 0;
-  align-items: start;
+  gap: 0.5rem 0.3rem;
+  padding: 0.6rem 0;
+  align-items: center;
 }
 
 .formula-aligned-group + .formula-aligned-group {
-  border-top: 1px solid #252a32;
+  border-top: 1px solid var(--calc-border, #d5dae3);
 }
 
 .formula-agent-label {
-  color: #6eb6ff;
+  color: var(--calc-text, #1c212a);
   font-weight: 600;
 }
 
 .formula-aligned-title {
   margin: 0;
-  padding-top: 0.15rem;
   line-height: 1.45;
 }
 
+/* 公式行：术语与值并排（与直伤期望公式同风格），一行放不下横向滚动 */
 .formula-aligned-body {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 0.35rem 0.45rem;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.3rem 0.5rem;
   min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 0.1rem;
 }
 
 .formula-aligned-term {
@@ -1717,21 +1767,30 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
   flex-direction: column;
   align-items: center;
   gap: 0.2rem;
-  min-width: 0;
+  min-width: 4.2em;
+}
+
+.formula-aligned-term--inline {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.28rem;
+  flex-shrink: 0;
 }
 
 .formula-aligned-term-label {
   font-size: 0.75rem;
   line-height: 1.35;
-  color: #b7c0cd;
+  color: var(--calc-text, #1c212a);
   text-align: center;
   white-space: nowrap;
+  letter-spacing: 0.02em;
 }
 
 .formula-aligned-hint {
   display: block;
   margin-top: 0.15rem;
-  color: #8a93a0;
+  color: var(--calc-text, #1c212a);
   font-size: 0.68rem;
   font-weight: 400;
   line-height: 1.35;
@@ -1739,39 +1798,40 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
 }
 
 .formula-aligned-term-value {
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   line-height: 1.4;
-  color: #d4dbe6;
+  color: var(--calc-text, #1c212a);
   text-align: center;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .formula-aligned-term-value :deep(.stat-value > strong) {
-  color: #d4dbe6;
-  font-weight: 400;
+  color: var(--calc-text, #1c212a);
+  font-weight: 600;
 }
 
 .formula-aligned-op {
   flex: 0 0 auto;
   align-self: center;
-  padding-bottom: 0.15rem;
-  color: #8a93a0;
+  color: var(--calc-text, #1c212a);
   font-size: 0.78rem;
 }
 
 .formula-aligned-result {
   flex: 0 0 auto;
-  align-self: flex-end;
-  padding-bottom: 0.05rem;
-  font-size: 0.8rem;
-  font-weight: 600;
+  align-self: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--calc-accent, #c9a55c);
+  font-variant-numeric: tabular-nums;
 }
 
 .formula-aligned-dual {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  align-self: flex-end;
+  align-self: center;
 }
 
 .formula-aligned-result--dual {
@@ -1781,36 +1841,56 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
   align-items: flex-start;
 }
 
+/* ===== 参数表：两列（参数名称左对齐 | 数值右对齐），每行一项，行分隔线 ===== */
 .result-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.4rem 0.6rem;
-  margin-top: 0.35rem;
+  grid-template-columns: 1fr;
+  gap: 0;
+  margin-top: 0.5rem;
   font-size: 0.82rem;
-  color: #c5cad3;
+  color: var(--calc-text, #1c212a);
 }
 
 .result-grid p {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 0.6rem;
   margin: 0;
+  padding: 0.3rem 0.1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--calc-border, #d5dae3) 55%, transparent);
 }
 
+.result-grid p > :last-child {
+  flex-shrink: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 汇总行：整行跨列 + 上边框强调 + 结果加粗高亮 */
 .result-total {
   grid-column: 1 / -1;
-  margin-top: 0.3rem !important;
-  border-top: 1px solid #2a2f36;
-  padding-top: 0.5rem;
+  margin-top: 0.45rem !important;
+  border-top: 1px solid var(--calc-border, #d5dae3);
+  border-bottom: none !important;
+  padding-top: 0.55rem;
+  font-weight: 700;
+  color: var(--calc-accent, #c9a55c);
 }
 
 .result-subtotal {
   grid-column: 1 / -1;
-  margin-top: 0.15rem !important;
-  border-top: 1px dashed #2a2f36;
-  padding-top: 0.35rem;
+  margin-top: 0.3rem !important;
+  border-top: 1px dashed var(--calc-border, #d5dae3);
+  border-bottom: none !important;
+  padding-top: 0.45rem;
+  font-weight: 700;
+  color: var(--calc-accent, #c9a55c);
 }
 
 @media (max-width: 980px) {
   .result-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1823,5 +1903,16 @@ const valueTips = computed<Record<ValueTipsKey, StatSourceGroup[]>>(() => {
     flex-wrap: wrap;
     gap: 0.35rem;
   }
+}
+
+
+/* 暗夜模式：组件根重定义 --calc-*（照抄仓库既有约定：AffixBenefitTable 的 benefit-workbench 写法） */
+:global([data-theme='dark'] .damage-result-detail) {
+  --calc-surface-2: rgba(0, 0, 0, 0.25);
+  --calc-border: #2a2f37;
+  --calc-text: #e8eaed;
+  --calc-muted: #9aa3b0;
+  --calc-input-bg: #171a1f;
+  --calc-accent-bg: rgba(201, 165, 92, 0.14);
 }
 </style>

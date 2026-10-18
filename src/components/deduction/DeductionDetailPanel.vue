@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   deductionNodeTypeLabel,
   deductionPeriodDisplay,
@@ -26,6 +27,7 @@ import AdminDeductionFuzzySelect from '@/components/admin/AdminDeductionFuzzySel
 import AdminImagePicker from '@/components/admin/AdminImagePicker.vue'
 import AdminBuffEffectEditor from '@/components/admin/calculator/AdminBuffEffectEditor.vue'
 import BuffEffectBlocksDisplay from '@/components/calculator/BuffEffectBlocksDisplay.vue'
+import BuffRichText from '@/components/calculator/BuffRichText.vue'
 import { uploadBossImage, uploadBuffImage, type BuffNameTemplate } from '@/api/admin'
 import { useCalculatorBuffStore } from '@/stores/calculatorBuffs'
 import type { BuffEffectBlock } from '@/types/calculator'
@@ -33,7 +35,13 @@ import { applyReusedMonsterLevel } from '@/utils/adminMonsterReuse'
 import { normalizeBuffEffectBlocks, packFromBlocks } from '@/utils/buffEffect'
 import { formatHp, resolveAssetUrl, splitBuffLines } from '@/utils/gameData'
 import { convertHpToDefense953, roundConvertedHp, REFERENCE_DEFENSE_953 } from '@/utils/defenseHpConvert'
-import { parseElementIcons } from '@/utils/elementIcons'
+import {
+  buildQueryWithValues,
+  PANEL_QUERY_KEYS,
+  readSingleQueryValue,
+} from '@/utils/panelUrlState'
+import ElementTraitChips from '@/components/shared/ElementTraitChips.vue'
+import ElementTraitIcons from '@/components/shared/ElementTraitIcons.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -142,6 +150,7 @@ const monsterDraft = ref<DeductionMonster>({
   level: 1,
   weakness: null,
   resistance: null,
+  resistance_high: null,
   boss_image: null,
 })
 
@@ -302,6 +311,7 @@ function onAddMonster(layer: number) {
     level: 1,
     weakness: null,
     resistance: null,
+    resistance_high: null,
     boss_image: null,
   })
   resetMonsterImagePicker()
@@ -312,6 +322,7 @@ function onAddMonster(layer: number) {
     level: 1,
     weakness: null,
     resistance: null,
+    resistance_high: null,
     boss_image: null,
   }
   editing.value = { kind: 'monster', layer, index }
@@ -600,24 +611,6 @@ function normalizeNodeType(type: number): number {
   return isDeductionBattleNode(type) ? 2 : 1
 }
 
-const ELEMENTS = ['冰', '火', '电', '以太', '物理', '风', '霜', '流明']
-
-function splitElements(value: string | null): string[] {
-  if (!value) return []
-  return value
-    .split(/[、,]/)
-    .map((s) => s.replace(/属性$/, '').trim())
-    .filter(Boolean)
-}
-
-function joinElements(list: string[]): string | null {
-  return list.length ? [...new Set(list)].join('、') : null
-}
-
-function toggleElement(list: string[], el: string): string[] {
-  return list.includes(el) ? list.filter((x) => x !== el) : [...list, el]
-}
-
 // ── 下拉数据源（怪物 / Buff） ──────────────────────
 
 const pickBosses = ref<AdminPickBoss[]>([])
@@ -734,6 +727,8 @@ function onPickMonster(option: { name: string; [key: string]: unknown }) {
     option.weakness == null ? null : String(option.weakness)
   monsterDraft.value.resistance =
     option.resistance == null ? null : String(option.resistance)
+  monsterDraft.value.resistance_high =
+    option.resistance_high == null ? null : String(option.resistance_high)
   if (option.boss_image) monsterDraft.value.boss_image = String(option.boss_image)
 }
 
@@ -858,12 +853,81 @@ watch(currentPeriod, () => {
   activeNodeIndex.value = 0
 })
 
+const route = useRoute()
+const router = useRouter()
+
+/** 从 URL 读「期 + 节点」（`?period=<periodId>&node=<nodeId>`） */
+function readQuerySelection(): { periodId?: string; nodeId?: string } {
+  return {
+    periodId: readSingleQueryValue(route.query, PANEL_QUERY_KEYS.period),
+    nodeId: readSingleQueryValue(route.query, PANEL_QUERY_KEYS.node),
+  }
+}
+
+/** 把当前期/节点写进 URL；参数为空即删除该项 */
+function syncSelectionToQuery() {
+  if (props.adminMode) return
+  const period = currentPeriod.value
+  if (!period) return
+  const nextPeriod = period.periodId
+  const nextNode = activeNode.value?.nodeId ?? null
+  const currentPeriodParam = readSingleQueryValue(route.query, PANEL_QUERY_KEYS.period)
+  const currentNodeParam = readSingleQueryValue(route.query, PANEL_QUERY_KEYS.node)
+  if (currentPeriodParam === nextPeriod && (currentNodeParam ?? null) === nextNode) return
+  void router.replace({
+    path: route.path,
+    query: buildQueryWithValues(route.query, {
+      [PANEL_QUERY_KEYS.period]: nextPeriod,
+      [PANEL_QUERY_KEYS.node]: nextNode,
+    }),
+    hash: route.hash,
+  })
+}
+
+/** 按 periodId / nodeId 落位；找不到的层级退回该层第一项 */
+async function applySelection(periodId: string | undefined, nodeId: string | undefined) {
+  const periodIndex = periodId ? periods.value.findIndex((item) => item.periodId === periodId) : -1
+  if (periodIndex < 0) return false
+  // 与 reload() 同样的时序：抑制 watch(currentPeriod) 把节点重置为 0，
+  // 等挂起的 watcher 跑完再解除，否则落不到 URL 指定的节点上。
+  suppressNodeReset.value = true
+  currentIndex.value = periodIndex
+  const nodeIndex = nodeId
+    ? (currentPeriod.value?.nodes.findIndex((item) => item.nodeId === nodeId) ?? -1)
+    : -1
+  activeNodeIndex.value = nodeIndex >= 0 ? nodeIndex : 0
+  await nextTick()
+  suppressNodeReset.value = false
+  return true
+}
+
+// 选中项变化（含期数列表刚加载完）→ 写入 URL
+watch([currentIndex, activeNodeIndex, periods], () => {
+  syncSelectionToQuery()
+})
+
+// URL 变化（浏览器前进后退 / 直接改地址）→ 同步回面板状态
+watch(
+  () => [route.query[PANEL_QUERY_KEYS.period], route.query[PANEL_QUERY_KEYS.node]].join('|'),
+  () => {
+    if (props.adminMode || !periods.value.length) return
+    const { periodId, nodeId } = readQuerySelection()
+    if (!periodId) return
+    void applySelection(periodId, nodeId)
+  },
+)
+
 async function load() {
   loading.value = true
   loadError.value = ''
   try {
     periods.value = await fetchDeductionPhases()
-    currentIndex.value = periods.value.length - 1
+    // 深链优先：URL 指定了期/节点就落位，否则维持原行为（最后一期）
+    const fromQuery = props.adminMode ? {} : readQuerySelection()
+    const applied = fromQuery.periodId
+      ? await applySelection(fromQuery.periodId, fromQuery.nodeId)
+      : false
+    if (!applied) currentIndex.value = periods.value.length - 1
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '加载失败'
     periods.value = []
@@ -1280,7 +1344,9 @@ onMounted(() => {
                     </button>
                   </template>
                 </div>
-                <p v-if="buff.desc" class="dd-buff-desc">{{ buff.desc }}</p>
+                <p v-if="buff.desc" class="dd-buff-desc">
+                  <BuffRichText :text="buff.desc" />
+                </p>
                 <BuffEffectBlocksDisplay
                   v-if="blocksForDisplay(buff.effect_blocks, buff.desc ?? '')?.length"
                   compact
@@ -1383,7 +1449,7 @@ onMounted(() => {
                   :key="lineIndex"
                   class="dd-field-buff-line"
                 >
-                  {{ line }}
+                  <BuffRichText :text="line" />
                 </p>
                 <BuffEffectBlocksDisplay
                   v-if="blocksForDisplay(layer.fieldBuff?.effectBlocks, layer.fieldBuff?.text ?? '')?.length"
@@ -1413,32 +1479,23 @@ onMounted(() => {
                         <label class="dd-num-inline">HP <input v-model.number="monsterDraft.hp" type="number" class="dd-inline dd-inline--num dd-inline--num-lg" /></label>
                         <label class="dd-num-inline">防御 <input v-model.number="monsterDraft.defense" type="number" class="dd-inline dd-inline--num dd-inline--num-lg" /></label>
                       </div>
-                      <div class="dd-inline-row">
-                        <span class="dd-mini-label">弱点</span>
-                        <button
-                          v-for="el in ELEMENTS"
-                          :key="'w' + el"
-                          type="button"
-                          class="dd-elem-chip"
-                          :class="{ 'dd-elem-chip--on': splitElements(monsterDraft.weakness).includes(el) }"
-                          @click="monsterDraft.weakness = joinElements(toggleElement(splitElements(monsterDraft.weakness), el))"
-                        >
-                          {{ el }}
-                        </button>
-                      </div>
-                      <div class="dd-inline-row">
-                        <span class="dd-mini-label">抗性</span>
-                        <button
-                          v-for="el in ELEMENTS"
-                          :key="'r' + el"
-                          type="button"
-                          class="dd-elem-chip"
-                          :class="{ 'dd-elem-chip--on dd-elem-chip--resist': splitElements(monsterDraft.resistance).includes(el) }"
-                          @click="monsterDraft.resistance = joinElements(toggleElement(splitElements(monsterDraft.resistance), el))"
-                        >
-                          {{ el }}
-                        </button>
-                      </div>
+                      <ElementTraitChips
+                        layout="inline"
+                        label="弱点"
+                        variant="weak"
+                        :model-value="monsterDraft.weakness ?? ''"
+                        @update:model-value="monsterDraft.weakness = $event || null"
+                      />
+                      <ElementTraitChips
+                        layout="inline"
+                        label="抗性"
+                        variant="resist"
+                        allow-high
+                        :model-value="monsterDraft.resistance ?? ''"
+                        @update:model-value="monsterDraft.resistance = $event || null"
+                        :high="monsterDraft.resistance_high ?? ''"
+                        @update:high="monsterDraft.resistance_high = $event || null"
+                      />
                       <div class="dd-inline-media">
                         <span class="dd-mini-label">图片</span>
                         <AdminImagePicker ref="monsterImagePickerRef" @change="onMonsterImageChange" />
@@ -1489,40 +1546,23 @@ onMounted(() => {
                             953 {{ monsterHpConverted953Text(monster) }}
                           </span>
                           <span class="dd-stat">防御 {{ formatHp(monster.defense) }}</span>
-                          <span v-if="parseElementIcons(monster.weakness).length" class="dd-stat dd-stat--weak">
-                            弱
-                            <span
-                              v-for="elem in parseElementIcons(monster.weakness)"
-                              :key="elem.name"
-                              class="dd-elem"
-                            >
-                              <img
-                                class="dd-elem-img"
-                                :src="elem.icon"
-                                :alt="elem.name"
-                                :title="elem.name"
-                                loading="lazy"
-                              />
-                              <span class="dd-elem-name">{{ elem.name }}</span>
-                            </span>
-                          </span>
-                          <span v-if="parseElementIcons(monster.resistance).length" class="dd-stat dd-stat--resist">
-                            抗
-                            <span
-                              v-for="elem in parseElementIcons(monster.resistance)"
-                              :key="elem.name"
-                              class="dd-elem"
-                            >
-                              <img
-                                class="dd-elem-img"
-                                :src="elem.icon"
-                                :alt="elem.name"
-                                :title="elem.name"
-                                loading="lazy"
-                              />
-                              <span class="dd-elem-name">{{ elem.name }}</span>
-                            </span>
-                          </span>
+                          <ElementTraitIcons
+                            class="dd-stat"
+                            :value="monster.weakness"
+                            label="弱"
+                            variant="weak"
+                            show-percent
+                            empty-text="无"
+                          />
+                          <ElementTraitIcons
+                            class="dd-stat"
+                            :value="monster.resistance"
+                            :high-value="monster.resistance_high"
+                            label="抗"
+                            variant="resist"
+                            show-percent
+                            empty-text="无"
+                          />
                           <span
                             v-if="monster.stagger_time != null"
                             class="dd-stat"

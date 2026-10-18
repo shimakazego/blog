@@ -21,8 +21,8 @@ mkdir -p "$HTML_DIR"
 rsync -a --delete /tmp/blog-dist-new/ "$HTML_DIR/"
 rm -rf /tmp/blog-dist-new "$UPLOAD_PATH"
 
-# 同步后端图片目录，保证新角色/Boss 图片可用
-for d in character wengine drive_disc bangboo boss_image buff_image calculator_image guestbook_image; do
+# 同步后端图片目录，保证新角色/Boss/属性图标可用
+for d in character wengine drive_disc bangboo boss_image buff_image calculator_image guestbook_image attribute_image shiyu_boss; do
   if [ -d "${BACKEND_DIR}/$d" ]; then
     rsync -a "${BACKEND_DIR}/$d/" "${HTML_DIR}/$d/" 2>/dev/null || true
   fi

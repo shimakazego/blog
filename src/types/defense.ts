@@ -12,6 +12,8 @@ export interface DefenseEnemy {
   /** 失衡时间（秒） */
   staggerTime?: number | null
   resistance?: string
+  /** 高抗性（40%）属性，为 resistance 的子集 */
+  resistanceHigh?: string
   isBoss?: boolean
 }
 
@@ -26,6 +28,8 @@ export interface DefenseBattleRoom {
   waveCount: number
   weakness: string[]
   resistance?: string[]
+  /** 高抗性（40%）属性，为 resistance 的子集 */
+  resistanceHigh?: string[]
   waves: DefenseWave[]
 }
 
@@ -53,7 +57,12 @@ export interface DefenseRoom {
   label: string
   level: number
   rankRequirements?: { s: string; a: string; b: string }
+  /**
+   * @deprecated 区域 Buff 已废弃；防卫战增益统一在 roomBuff（关卡增益）。
+   * API 仍返回空数组以兼容旧客户端。
+   */
   zoneBuffs: string[]
+  /** @deprecated 见 zoneBuffs */
   zoneBuffRecords?: DefenseZoneBuffRecord[]
   roomBuff: DefenseBuffInfo
   battleRooms: DefenseBattleRoom[]

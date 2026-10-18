@@ -21,6 +21,8 @@ export interface CreateBossPayload {
   room?: string | null
   weakness?: string | null
   resistance?: string | null
+  /** 高抗性（40%）属性，为 resistance 的子集 */
+  resistance_high?: string | null
   boss_image?: string | null
   stage?: number
   roomInStage?: number
@@ -33,6 +35,8 @@ export interface CreateBossPayload {
   hp_coeff_manual?: boolean
   stagger_multiplier?: number | null
   stagger_time?: number | null
+  /** 异常条系数（初始异常积蓄 = 基础异常条 × 系数），空按 1 处理 */
+  anomaly_bar_coefficient?: number | null
   /** 危局当期绑定的场地 Buff 套 id */
   field_buff_set_id?: string | null
 }
@@ -80,9 +84,12 @@ export interface BossInfoRecord {
   boss_image: string | null
   weakness: string | null
   resistance: string | null
+  resistance_high?: string | null
   crisis_base_hp?: number | null
   stagger_multiplier?: number | null
   stagger_time?: number | null
+  /** 异常条系数（初始异常积蓄 = 基础异常条 × 系数），空按 1 处理 */
+  anomaly_bar_coefficient?: number | null
   field_buff_sets?: Array<{
     id: string
     label?: string | null
@@ -103,6 +110,7 @@ export interface BossInfoSyncResult {
   boss_image: string | null
   weakness: string | null
   resistance: string | null
+  resistance_high?: string | null
 }
 
 export interface CreateBossResult {
@@ -122,6 +130,7 @@ export interface BossRecord {
   room: string | null
   weakness: string | null
   resistance: string | null
+  resistance_high?: string | null
   boss_image: string | null
   stagger_multiplier?: number | null
   stagger_time?: number | null
@@ -286,7 +295,7 @@ export async function lookupBossInfo(bossName: string) {
   const query = bossName.trim()
   if (!query) return null
 
-  const response = await fetch(`/api/zzz/zzz/boss-info/lookup?boss_name=${encodeURIComponent(query)}`)
+  const response = await fetch(`/api/zzz/boss-info/lookup?boss_name=${encodeURIComponent(query)}`)
   return parseResponse<BossInfoRecord | null>(response)
 }
 
@@ -294,7 +303,7 @@ export async function searchBossInfoNames(keyword: string) {
   const query = keyword.trim()
   if (!query) return []
 
-  const response = await fetch(`/api/zzz/zzz/boss-info/search?q=${encodeURIComponent(query)}`)
+  const response = await fetch(`/api/zzz/boss-info/search?q=${encodeURIComponent(query)}`)
   return parseResponse<string[]>(response)
 }
 
@@ -330,12 +339,12 @@ function buildSearchQuery(params: AdminSearchParams) {
 
 export async function searchBossRecords(params: AdminSearchParams = {}) {
   const query = buildSearchQuery(params)
-  const response = await fetch(`/api/zzz/zzz/boss/search${query ? `?${query}` : ''}`)
+  const response = await fetch(`/api/zzz/boss/search${query ? `?${query}` : ''}`)
   return parseResponse<BossRecord[]>(response)
 }
 
 export async function deleteBossRecord(id: number) {
-  const response = await fetch(`/api/zzz/zzz/boss/${id}`, {
+  const response = await fetch(`/api/zzz/boss/${id}`, {
     method: 'DELETE',
     headers: withAdminAuthHeaders(),
   })
@@ -344,13 +353,13 @@ export async function deleteBossRecord(id: number) {
 
 export async function searchBuffRecords(params: AdminSearchParams = {}) {
   const query = buildSearchQuery(params)
-  const response = await fetch(`/api/zzz/zzz/buff/search${query ? `?${query}` : ''}`)
+  const response = await fetch(`/api/zzz/buff/search${query ? `?${query}` : ''}`)
   return parseResponse<BuffRecord[]>(response)
 }
 
 export async function fetchBuffNameTemplates(recordScheme?: RecordScheme) {
   const query = recordScheme ? `?recordScheme=${encodeURIComponent(recordScheme)}` : ''
-  const response = await fetch(`/api/zzz/zzz/buff/templates${query}`)
+  const response = await fetch(`/api/zzz/buff/templates${query}`)
   return parseResponse<BuffNameTemplate[]>(response)
 }
 
@@ -358,7 +367,7 @@ export async function fetchBuffTableSnapshot(mode?: BuffTableMode | null) {
   const query = new URLSearchParams()
   if (mode) query.set('mode', mode)
   const qs = query.toString()
-  const response = await fetch(`/api/zzz/zzz/buff/export${qs ? `?${qs}` : ''}`, {
+  const response = await fetch(`/api/zzz/buff/export${qs ? `?${qs}` : ''}`, {
     headers: withAdminAuthHeaders(),
   })
   return parseResponse<BuffTableSnapshot>(response)
@@ -374,7 +383,7 @@ export async function importBuffTableSnapshotFile(
   if (options?.replace) query.set('replace', '1')
   if (options?.mode) query.set('mode', options.mode)
   const qs = query.toString()
-  const response = await fetch(`/api/zzz/zzz/buff/import${qs ? `?${qs}` : ''}`, {
+  const response = await fetch(`/api/zzz/buff/import${qs ? `?${qs}` : ''}`, {
     method: 'POST',
     headers: withAdminAuthHeaders(),
     body: form,
@@ -383,7 +392,7 @@ export async function importBuffTableSnapshotFile(
 }
 
 export async function deleteBuffRecord(id: number) {
-  const response = await fetch(`/api/zzz/zzz/buff/${id}`, {
+  const response = await fetch(`/api/zzz/buff/${id}`, {
     method: 'DELETE',
     headers: withAdminAuthHeaders(),
   })
@@ -412,7 +421,7 @@ export interface SeasonDatePayload {
 }
 
 export async function fetchSeasonDates(mode: SeasonDateMode) {
-  const response = await fetch(`/api/zzz/zzz/season-dates?mode=${mode}`)
+  const response = await fetch(`/api/zzz/season-dates?mode=${mode}`)
   return parseResponse<SeasonDateRecord[]>(response)
 }
 
@@ -426,7 +435,7 @@ export async function createSeasonDate(payload: SeasonDatePayload) {
 }
 
 export async function updateSeasonDate(id: number, payload: SeasonDatePayload) {
-  const response = await fetch(`/api/zzz/zzz/season-dates/${id}`, {
+  const response = await fetch(`/api/zzz/season-dates/${id}`, {
     method: 'PUT',
     headers: withAdminAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
@@ -435,7 +444,7 @@ export async function updateSeasonDate(id: number, payload: SeasonDatePayload) {
 }
 
 export async function deleteSeasonDate(id: number) {
-  const response = await fetch(`/api/zzz/zzz/season-dates/${id}`, {
+  const response = await fetch(`/api/zzz/season-dates/${id}`, {
     method: 'DELETE',
     headers: withAdminAuthHeaders(),
   })

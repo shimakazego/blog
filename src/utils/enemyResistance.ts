@@ -1,7 +1,7 @@
 export type EnemyResistanceType = 'weak' | 'normal' | 'res20' | 'res40'
 
 /** 可单独配置抗性的属性（不含流明） */
-export const ENEMY_RESISTANCE_ELEMENTS = ['风', '火', '电', '物理', '以太', '冰', '霜'] as const
+export const ENEMY_RESISTANCE_ELEMENTS = ['风', '火', '电', '物理', '以太', '冰'] as const
 
 export type EnemyResistanceElement = (typeof ENEMY_RESISTANCE_ELEMENTS)[number]
 
@@ -55,9 +55,11 @@ export function createDefaultElementResistance(): Record<
     物理: 'normal',
     以太: 'normal',
     冰: 'normal',
-    霜: 'normal',
   }
 }
+
+/** 未选怪物时的默认敌方防御 */
+export const DEFAULT_ENEMY_DEFENSE = 953
 
 export function normalizeDamageEnemyInput(
   input: Partial<DamageEnemyInput> | null | undefined,
@@ -65,6 +67,8 @@ export function normalizeDamageEnemyInput(
   const fallbackType = input?.resistanceType ?? 'normal'
   const base = createDefaultElementResistance()
   const merged = { ...base, ...input?.elementResistance }
+  // 旧存档可能残留已下线属性「霜」
+  delete (merged as Record<string, unknown>)['霜']
   if (input?.resistanceType && !input?.elementResistance) {
     for (const el of ENEMY_RESISTANCE_ELEMENTS) {
       merged[el] = input.resistanceType
@@ -84,6 +88,18 @@ export function normalizeDamageEnemyInput(
     bossRecordLabel: input?.bossRecordLabel,
     bossImage: input?.bossImage,
   }
+}
+
+/** 未选怪物时的默认敌方基础参数（与计算器初始值一致） */
+export function createDefaultDamageEnemyInput(): DamageEnemyInput {
+  return normalizeDamageEnemyInput({
+    defense: DEFAULT_ENEMY_DEFENSE,
+    vulnerableMultiplier: 1,
+    staggerMultiplier: DEFAULT_ENEMY_STAGGER_MULTIPLIER,
+    specialMultiplier: 1,
+    level: 60,
+    bossSource: 'manual',
+  })
 }
 
 export function isEnemyResistanceElement(
@@ -109,12 +125,6 @@ export function resolveEnemyResistanceForElement(
 
 export function resistanceTypeLabel(type: EnemyResistanceType): string {
   return ENEMY_RESISTANCE_OPTIONS.find((item) => item.id === type)?.label ?? type
-}
-
-export function agentElementToResistanceElement(
-  element: string | null | undefined,
-): EnemyResistanceElement | null {
-  return isEnemyResistanceElement(element) ? element : null
 }
 
 /** 怪物库模式下仅展示有弱点或有抗性的属性 */

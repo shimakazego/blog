@@ -8,6 +8,8 @@ import {createPinia} from "pinia"
 import App from "/src/vue/stack/App.vue"
 import HomePage from "/src/vue/content/pages/HomePage.vue"
 import {createModePanelRouteRecords} from "/src/router/modePanelRoutes"
+import {createSidebarPanelRouteRecords} from "/src/router/sidebarPanelRoutes"
+import {CHARACTER_CALC_PAGES} from "/src/constants/sidebarPanelIds"
 import {initTheme} from "/src/stores/theme"
 
 initTheme()
@@ -41,12 +43,14 @@ const router = createRouter({
             meta: {hideSiteChrome: true}
         },
 
-        {
-            path: "/zzz/calculator",
-            name: "zzz-calculator",
+        ...createSidebarPanelRouteRecords({
+            basePath: "/zzz/calculator",
+            routeName: "zzz-calculator",
             component: ZzzCalculatorPage,
+            panelIds: CHARACTER_CALC_PAGES,
+            defaultPanelId: "damage",
             meta: {hideSiteChrome: true}
-        },
+        }),
 
         ...createModePanelRouteRecords({
             basePath: "/zzz/crisis-assault",

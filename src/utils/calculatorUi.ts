@@ -16,7 +16,7 @@ import {
 import { normalizeBuffMultFactorDelta } from '@/utils/multFactorPercent'
 
 export const AGENT_ROLES = ['强攻', '击破', '异常', '支援', '防护', '命破', '锋御'] as const
-export const AGENT_ELEMENTS = ['风', '火', '电', '物理', '以太', '冰', '霜', '流明'] as const
+export const AGENT_ELEMENTS = ['风', '火', '电', '物理', '以太', '冰', '流明'] as const
 export const WENGINE_RARITIES = ['S', 'A', 'B'] as const
 export type WengineRarity = (typeof WENGINE_RARITIES)[number]
 
@@ -197,6 +197,13 @@ export const BUFF_STAT_FIELDS: {
   },
   { key: 'anomalyCritRate', label: '异常暴击', unit: 'percent', hint: '百分点，累加到局内异常暴击率%' },
   { key: 'anomalyCritDmg', label: '异常爆伤', unit: 'percent', hint: '百分点，累加到局内异常爆伤%' },
+  // 子类专用暴击（用户 2026-10-16）：各子类只吃自己的字段
+  { key: 'turbulenceCritRate', label: '乱流暴击', unit: 'percent', hint: '百分点，仅乱流结算吃（各子类只吃自己的暴击）' },
+  { key: 'turbulenceCritDmg', label: '乱流爆伤', unit: 'percent', hint: '百分点，仅乱流结算吃' },
+  { key: 'radianceCritRate', label: '耀变暴击', unit: 'percent', hint: '百分点，仅耀变结算吃' },
+  { key: 'radianceCritDmg', label: '耀变爆伤', unit: 'percent', hint: '百分点，仅耀变结算吃' },
+  { key: 'disorderCritRate', label: '紊乱暴击', unit: 'percent', hint: '百分点，仅紊乱结算吃' },
+  { key: 'disorderCritDmg', label: '紊乱爆伤', unit: 'percent', hint: '百分点，仅紊乱结算吃' },
   { key: 'anomalyDmgBonus', label: '异常增伤', unit: 'percent', hint: '百分点，与异常增伤区加算（1 + 值/100）' },
   {
     key: 'directDmgMult',
@@ -214,7 +221,7 @@ export const BUFF_STAT_FIELDS: {
     key: 'directDmgMultFactor',
     label: '直伤倍率修正',
     unit: 'percent',
-    hint: '百分点，与面板倍率修正加算；默认 100% 表示 ×1',
+    hint: '百分点增量，与面板倍率修正加算；提升 20% 填 20（面板默认 100）',
   },
   {
     key: 'anomalyMult',
@@ -226,7 +233,7 @@ export const BUFF_STAT_FIELDS: {
     key: 'anomalyMultFactor',
     label: '异常倍率修正',
     unit: 'percent',
-    hint: '百分点，与面板倍率修正加算',
+    hint: '百分点增量，与面板倍率修正加算；提升 20% 填 20',
   },
   {
     key: 'disorderBaseMult',
@@ -238,7 +245,7 @@ export const BUFF_STAT_FIELDS: {
     key: 'disorderBaseMultFactor',
     label: '紊乱倍率修正',
     unit: 'percent',
-    hint: '百分点，与面板倍率修正加算',
+    hint: '百分点增量，与面板倍率修正加算；提升 20% 填 20',
   },
   {
     key: 'anomalyDuration',
@@ -262,7 +269,7 @@ export const BUFF_STAT_FIELDS: {
     key: 'turbulenceBaseMultFactor',
     label: '乱流倍率修正',
     unit: 'percent',
-    hint: '百分点，与面板倍率修正加算',
+    hint: '百分点增量，与面板倍率修正加算；提升 20% 填 20',
   },
   {
     key: 'turbulenceCompMult',
@@ -291,8 +298,8 @@ export const BUFF_STAT_FIELDS: {
   {
     key: 'radianceMultFactor',
     label: '耀变倍率修正',
-    unit: 'factor',
-    hint: '乘算修正，默认 100',
+    unit: 'percent',
+    hint: '百分点增量，与面板倍率修正加算；提升 20% 填 20',
   },
   {
     key: 'specialMult',
@@ -303,8 +310,8 @@ export const BUFF_STAT_FIELDS: {
   {
     key: 'specialMultFactor',
     label: '特殊倍率修正',
-    unit: 'factor',
-    hint: '乘算修正，默认 100',
+    unit: 'percent',
+    hint: '百分点增量，与面板倍率修正加算；提升 20% 填 20',
   },
   {
     key: 'radianceDmgBonus',
@@ -327,8 +334,8 @@ export const BUFF_STAT_FIELDS: {
   {
     key: 'mutationCoeffFactor',
     label: '异化系数修正',
-    unit: 'factor',
-    hint: '乘算修正，默认 100',
+    unit: 'percent',
+    hint: '百分点增量，与面板倍率修正加算；提升 20% 填 20',
   },
   { key: 'hp', label: '固定生命', unit: 'flat', hint: '固定数值，直接加到局内生命' },
   {
@@ -338,10 +345,16 @@ export const BUFF_STAT_FIELDS: {
     hint: '独立乘区，仅当直伤基础来源为贯穿力时生效，不进增伤区',
   },
   {
+    key: 'sharpenDmgBonus',
+    label: '锐化伤害提升',
+    unit: 'percent',
+    hint: '独立乘区，仅锐化路径生效（锋御专属，对标命破贯穿增伤），不进增伤区',
+  },
+  {
     key: 'sharpenCritDmgBonus',
     label: '锐爆伤害加成',
     unit: 'percent',
-    hint: '仅锐化：锐爆伤害 B = 120% + 本值；替换常规暴伤区',
+    hint: '仅锐化：锐爆伤害 B = 本值（无内置基础值）；替换常规暴伤区',
   },
   {
     key: 'dmgPenalty',
@@ -377,7 +390,7 @@ export const BUFF_STAT_FIELDS: {
     key: 'anomalyReleaseMultFactor',
     label: '异放倍率修正',
     unit: 'percent',
-    hint: '百分点，与面板倍率修正加算',
+    hint: '百分点增量，与面板倍率修正加算；提升 20% 填 20',
   },
   {
     key: 'skillDmgBonus',
@@ -407,7 +420,6 @@ export const SKILL_BUFF_STAT_FIELDS = BUFF_STAT_FIELDS.filter((field) =>
 /** 角色面板异常倍率% 默认值（与公共招式 baseMult 同一套数字，招式侧不再额外乘） */
 export const ANOMALY_MULT_BY_ELEMENT: Record<AgentElement, number> = {
   冰: 500,
-  霜: 500,
   物理: 713,
   火: 50,
   电: 125,
@@ -431,7 +443,6 @@ export function defaultDisorderCompMultByElement(element: string, agentIdOrName 
   const disorderCompByElement: Record<string, number> = {
     物理: 7.5,
     冰: 7.5,
-    霜: 7.5,
     火: 50,
     电: 125,
     以太: 62.5,
@@ -478,7 +489,6 @@ export function defaultTurbulenceStats(
   const turbulenceBaseByElement: Record<string, number> = {
     物理: 800,
     冰: 1300,
-    霜: 1300,
     火: 900,
     电: 650,
     以太: 650,
@@ -502,13 +512,6 @@ export function effectiveAnomalyDuration(duration: number, element: string): num
 export function buffStatFieldLabel(field: (typeof BUFF_STAT_FIELDS)[number]) {
   return field.unit === 'flat' ? `${field.label}（数值）` : `${field.label}%`
 }
-
-export const TWO_PIECE_BUFF_STAT_FIELDS = BUFF_STAT_FIELDS.filter(
-  (field) =>
-    field.key !== 'inCombatHpPercent' &&
-    field.key !== 'inCombatAtkPercent' &&
-    field.key !== 'inCombatDefPercent',
-)
 
 export function normalizeTwoPieceMods(value: unknown): BuffStatModifiers {
   const mods = normalizeBuffStatModifiers(value)
@@ -560,6 +563,7 @@ export function createEmptyBuffStatModifiers(): BuffStatModifiers {
     energyRegenFlat: 0,
     pierce: 0,
     pierceDmgBonus: 0,
+    sharpenDmgBonus: 0,
     sharpenCritDmgBonus: 0,
     dmgPenalty: 0,
     vulnerable: 0,
@@ -578,6 +582,12 @@ export function createEmptyBuffStatModifiers(): BuffStatModifiers {
     anomalyReleaseDmgBonus: 0,
     anomalyReleaseCritRate: 0,
     anomalyReleaseCritDmg: 0,
+    turbulenceCritRate: 0,
+    turbulenceCritDmg: 0,
+    radianceCritRate: 0,
+    radianceCritDmg: 0,
+    disorderCritRate: 0,
+    disorderCritDmg: 0,
     anomalyReleaseMult: 0,
     directDmgMult: 0,
     settlementDmgMult: 0,
@@ -629,22 +639,6 @@ export function normalizeMindscapeNotes(value: unknown): string[] {
 export function getMindscapeNote(agent: { mindscapeNotes?: string[] }, rank: number): string {
   const clampedRank = Math.min(6, Math.max(0, Math.round(rank)))
   return agent.mindscapeNotes?.[clampedRank]?.trim() ?? ''
-}
-
-/** 影画注释按阶叠加：N 影包含 0～N 影全部非空条目 */
-export function getMindscapeNotesUpToRank(
-  agent: { mindscapeNotes?: string[] },
-  rank: number,
-): { rank: number; text: string }[] {
-  const clampedRank = Math.min(6, Math.max(0, Math.round(rank)))
-  const notes: { rank: number; text: string }[] = []
-
-  for (let index = 0; index <= clampedRank; index++) {
-    const text = agent.mindscapeNotes?.[index]?.trim() ?? ''
-    if (text) notes.push({ rank: index, text })
-  }
-
-  return notes
 }
 
 export function createEmptyRefinementMods() {
@@ -732,26 +726,28 @@ export function normalizeWengineRefinementBuffs(value: unknown): AgentMindscapeR
   return REFINEMENT_RANKS.map((_, index) => normalizeSelfTeamBuffs(value[index] ?? {}))
 }
 
-export function normalizeRefinementMods(value: unknown): BuffStatModifiers[] {
-  const empty = createEmptyRefinementMods()
-  if (!Array.isArray(value)) return empty
-  return REFINEMENT_RANKS.map((_, index) => normalizeBuffStatModifiers(value[index]))
-}
+/**
+ * 倍率类字段：叠加规则是「百分点增量」直接加算，而非乘算。
+ *
+ * 提到模块级并改用 Set：本函数是热路径（实测一次 30 词条求解调用 8 万次以上），
+ * 原实现每次调用都新建这个 5 元素数组、并对每个字段做一次 `includes` 线性扫描
+ * （80 字段 × 8 万次 ≈ 640 万次扫描 + 8 万次数组分配）。语义不变，只是把常量搬出来。
+ */
+const FACTOR_STAT_KEYS: ReadonlySet<BuffStatKey> = new Set<BuffStatKey>([
+  'directDmgMultFactor',
+  'anomalyMultFactor',
+  'anomalyReleaseMultFactor',
+  'disorderBaseMultFactor',
+  'turbulenceBaseMultFactor',
+])
 
 export function mergeBuffStatModifiers(
   target: BuffStatModifiers,
   source: BuffStatModifiers,
 ): BuffStatModifiers {
   const result = { ...target }
-  const factorKeys: BuffStatKey[] = [
-    'directDmgMultFactor',
-    'anomalyMultFactor',
-    'anomalyReleaseMultFactor',
-    'disorderBaseMultFactor',
-    'turbulenceBaseMultFactor',
-  ]
   for (const field of BUFF_STAT_FIELDS) {
-    if (factorKeys.includes(field.key)) {
+    if (FACTOR_STAT_KEYS.has(field.key)) {
       const src = Number(source[field.key])
       // 增益倍率修正为百分点增量，直接加算
       if (Number.isFinite(src)) result[field.key] += src
@@ -797,17 +793,6 @@ export function getMindscapeRankOnlyBuffs(
   return mindscapeBuffs[clampedRank] ?? createEmptySelfTeamBuffs()
 }
 
-export function hasBuffStatModifiers(mods: BuffStatModifiers) {
-  return BUFF_STAT_FIELDS.some((field) => mods[field.key] !== 0)
-}
-
-export function formatBuffModsSummary(mods: BuffStatModifiers) {
-  const parts = BUFF_STAT_FIELDS.filter((field) => mods[field.key] !== 0).map((field) => {
-    const value = mods[field.key]
-    return `${buffStatFieldLabel(field)} ${value > 0 ? '+' : ''}${value}`
-  })
-  return parts.length ? parts.join('，') : '无'
-}
 
 export const AGENT_BASE_PANEL_FIELDS: {
   key: keyof AgentBasePanel
@@ -819,6 +804,7 @@ export const AGENT_BASE_PANEL_FIELDS: {
   { key: 'def', label: '基础防御力', unit: 'flat' },
   { key: 'critRate', label: '初始暴击率', unit: 'percent' },
   { key: 'critDmg', label: '初始爆伤', unit: 'percent' },
+  { key: 'sharpenCritDmgBonus', label: '初始锐爆伤害', unit: 'percent' },
   { key: 'mastery', label: '初始精通', unit: 'flat' },
   { key: 'anomalyControl', label: '初始异常掌控', unit: 'flat' },
   { key: 'energyRegen', label: '初始能量回复效率', unit: 'percent' },
@@ -871,6 +857,7 @@ export function createEmptyAgentBasePanel(): AgentBasePanel {
     def: 0,
     critRate: 0,
     critDmg: 0,
+    sharpenCritDmgBonus: 0,
     mastery: 0,
     anomalyControl: 0,
     energyRegen: 0,
@@ -948,31 +935,4 @@ export function normalizeWengineAdvancedStats(value: unknown): WengineAdvancedSt
   }
   result.energyRegen = normalizeEnergyRegenPercent(result.energyRegen)
   return result
-}
-
-export function roleShort(role: string) {
-  const map: Record<string, string> = {
-    强攻: '强',
-    击破: '破',
-    异常: '异',
-    支援: '援',
-    防护: '防',
-    命破: '命',
-    锋御: '锋',
-  }
-  return map[role] ?? role.slice(0, 1)
-}
-
-export function elementShort(element: string) {
-  const map: Record<string, string> = {
-    风: '风',
-    火: '火',
-    电: '电',
-    物理: '物',
-    以太: '以',
-    冰: '冰',
-    霜: '霜',
-    流明: '流',
-  }
-  return map[element] ?? element.slice(0, 1)
 }

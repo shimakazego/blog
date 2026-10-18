@@ -27,31 +27,69 @@ export type DamageCalcConvertSlotPanels = Record<
   Partial<Record<CharacterAttrKey, number>>
 >
 
+/** 局外面板的两种来源：面板导入 / 词条导入 */
+export type AgentPanelSourceKind = 'imported' | 'affixDerived'
+
+/** 来源的来历与时间：仅界面显示与排查用，**计算链路不得读取** */
+export interface AgentPanelProvenance {
+  /** 该角色「面板导入」那份的写入时间 */
+  importedAt?: number
+  /** 该角色「词条导入」那份的写入时间 */
+  affixDerivedAt?: number
+  source?: 'screenshot' | 'manual' | 'affix'
+}
+
+/**
+ * 每个角色的两份局外面板 —— **平级**，字段名刻意不叫「主 / 备」。
+ *
+ * - 两份各带来历、互不覆盖：一次导入只写当前这一路，另一份原样保留；
+ * - `active` 是每角色一份的显式状态，落进方案库与工作草稿；
+ * - 词条数与 4/5/6 主属性挂在**各自的来源记录**里，只服务「词条导入」这一路；
+ * - 下游只读 `active` 那份（`resolveActivePanel`），不接收也不查询来源。
+ */
+export interface AgentPanelSources {
+  /** 「面板导入」那份：游戏里看到的数字（截图识别或手打） */
+  importedPanel?: PanelStats
+  /** 「词条导入」那份：按条数算出来的数字 */
+  affixDerivedPanel?: PanelStats
+  /** 生成 affixDerivedPanel 的输入，只服务「词条导入」这一路的再次编辑 */
+  affixCounts?: AffixCounts
+  affixDriveDiscMainStats?: AffixDriveDiscMainStats
+  /** 当前生效的那份 */
+  active: AgentPanelSourceKind
+  /** 来历与时间，仅展示与排查用；计算链路不得读取 */
+  provenance?: AgentPanelProvenance
+}
+
 export interface DamageCalcTeamSlotSnapshot {
   agentId: string
   rank: number
   wengineId: string
   wengineRefine: number
-  isMainC: boolean
   twoPieceDriveDiscId: string
   fourPieceDriveDiscId: string
-  /** 该槽位词条计算的 4/5/6 号盘主属性；跟 2/4 件套一起存，避免只活在编辑器里被换人冲掉 */
+  /** @deprecated 已迁入 `slotPanels[agentId].affixDriveDiscMainStats`（v4 迁移时清除） */
   affixDriveDiscMainStats?: AffixDriveDiscMainStats
-  /** 该槽位副词条数 */
+  /** @deprecated 已迁入 `slotPanels[agentId].affixCounts`（v4 迁移时清除） */
   affixCounts?: AffixCounts
 }
 
 export interface DamageCalcPanelSnapshot {
   baseDamageSource: 'atk' | 'pierce' | 'def'
   externalPanel: PanelStats
-  affixCounts: AffixCounts
-  affixDriveDiscMainStats: AffixDriveDiscMainStats
-  /** 每人一份词条数；缺省时只用上面那份当前角色词条 */
-  affixStateByAgent?: Record<
+  /**
+   * 每人一份五大类技能等级（面板导入配置；缺省全 12）。
+   * 仅影响 nanoka 导入直伤招式的有效倍率。
+   */
+  skillTalentLevelsByAgent?: Record<
     string,
-    { affixCounts: AffixCounts; affixDriveDiscMainStats: AffixDriveDiscMainStats }
+    import('@/utils/skillTalentLevels').SkillTalentLevels
   >
-  extraMods: BuffStatModifiers
+  /**
+   * @deprecated 旧格式的扁平额外 Buff 属性。**只读**：仅供导入老配置文件时转成下面的条目
+   * （`PanelCalcSection` 的兼容分支）。新文件不再写它；彻底删除见代办 T23。
+   */
+  extraMods?: BuffStatModifiers
   /** 额外 Buff 增益条目（优先于扁平 extraMods） */
   extraGains?: Array<{
     id: string
@@ -59,7 +97,8 @@ export interface DamageCalcPanelSnapshot {
     stat: keyof BuffStatModifiers
     value: number
     applySituation?: import('@/types/calculator').BuffApplySituation
-    scope?: import('@/types/calculator').BuffScope
+    /** 作用域（数组口径；历史数据里的单值字符串读时会归一化） */
+    scope?: import('@/types/calculator').BuffScope[]
     applyTarget?: import('@/types/calculator').BuffApplyTarget
     applySlot?: number | 'team'
     skillCategory?: import('@/types/calculator').BuffSkillTargetId
@@ -103,31 +142,100 @@ export interface PreparedSkillExtraMods {
 }
 
 /**
+ * 准备阶段技能组内某一段的双代理人（与普通准备招式同语义）。
+ * memberKey = `${order}:${skillId}`，与流程细调对齐。
+ */
+export interface PreparedGroupMemberAgents {
+  memberKey: string
+  skillId: string
+  anomalyPowerAgentId?: string | null
+  triggerAgentId?: string | null
+}
+
+/**
  * 准备阶段的一条记录（用户仍称之为「招式」，此名仅存盘用）。
- * 只绑定招式库的 `skillId`，不复制招式定义。
+ * 普通招式绑 `skillId`；技能组绑 `skillGroupId`（二者互斥）。
  */
 export interface PreparedSkill {
   /** 本方案内实例 id；流程引用它，而非直接引用招式库 */
   id: string
-  skillId: string
+  /** 普通招式 id；与 skillGroupId 互斥 */
+  skillId?: string | null
+  /** 技能组 id；与 skillId 互斥 */
+  skillGroupId?: string | null
   skillSource: SkillSource
-  /** 异常强度提供者（agentId）。留空则不能计算 */
+  /** 异常强度提供者（agentId）。普通招式用；技能组优先看 memberAgents */
   anomalyPowerAgentId?: string | null
-  /** 异常类触发者（agentId）。留空则不能计算 */
+  /** 异常类触发者（agentId）。普通招式用；技能组优先看 memberAgents */
   triggerAgentId?: string | null
+  /** 技能组：按段配置双代理人；缺省段在结算时回落 defaultAnomalyAgents */
+  memberAgents?: PreparedGroupMemberAgents[] | null
   extraMods?: PreparedSkillExtraMods | null
 }
 
-/** 流程里的一条编排 */
+/** 一条流程行的 buff 例外（只存"与全局不同"的禁用项；缺省/空 = 全部继承全局） */
+export interface FlowBuffOverride {
+  /** 按效果块禁用 */
+  disabledBlockIds?: string[] | null
+  /** 按单条效果禁用（下钻） */
+  disabledEffectIds?: string[] | null
+  /**
+   * 按效果覆盖叠层数（缺省/无该键 = 继承全局层数；2026-10-08 对齐局内增益）
+   */
+  stacksByEffectId?: Record<string, number> | null
+  /**
+   * 按效果覆盖转模手填输入（缺省/无该键 = 继承全局输入；仅 manual 转模有意义）
+   */
+  convertInputsByEffectId?: Record<string, number> | null
+}
+
+/**
+ * 流程组行上的成员覆盖（仅该方案实例；缺省 = 继承整组 FlowEntry + 组定义）。
+ */
+export interface FlowGroupMemberOverride {
+  /** 稳定键：`${order}:${skillId}` */
+  memberKey: string
+  skillId: string
+  /** 若填：替代成员定义 count，再 × FlowEntry.count */
+  count?: number | null
+  staggerPhase?: StaggerPhase | null
+  critMode?: DamageEventCritMode | null
+  /** 该成员的 buff 例外（缺省 = 继承整行 FlowEntry.buffOverrides） */
+  buffOverrides?: FlowBuffOverride | null
+  /** 本行这一段的强度提供者 / 触发者（缺省 = 继承准备条目成员配置） */
+  anomalyPowerAgentId?: string | null
+  triggerAgentId?: string | null
+}
+
+/** 流程里的一条编排（普通招式或整组各占一行） */
 export interface FlowEntry {
   id: string
   /** 该流程所属角色；为将来三条流程合并显示预留 */
   ownerAgentId: string
   /** 指向准备阶段的某条 */
   preparedId: string
+  /** 普通招式 = 次数；技能组 = 整组乘数（× 成员 count） */
   count: number
+  /** 整组默认失衡；成员可 override */
   staggerPhase: StaggerPhase
+  /** 整组默认暴击；成员可 override */
   critMode: DamageEventCritMode
+  /** 仅准备为技能组时有意义 */
+  memberOverrides?: FlowGroupMemberOverride[] | null
+  /**
+   * 本行的 buff 例外（仅该方案实例；缺省/空 = 全部继承全局勾选）。
+   * 只允许"禁用"（减法语义）：与全局一致的一律不写，老数据读到即继承。
+   * 技能组行：整组用本字段；逐成员用 memberOverrides[].buffOverrides。
+   */
+  buffOverrides?: FlowBuffOverride | null
+  /**
+   * **行级**异常强度提供者 / 触发者（缺省 = 继承准备条目上那一份）。
+   *
+   * 准备条目与流程行因此解耦：同一条准备招式被两行引用时，两行可以各配各的
+   * （用户口径 2026-10-06）。技能组行逐成员仍走 `memberOverrides[]`。
+   */
+  anomalyPowerAgentId?: string | null
+  triggerAgentId?: string | null
 }
 
 /**
@@ -148,8 +256,16 @@ export interface DamageCalcWorkingDraft {
   selectedBangbooId: string
   bangbooRefine: number
   panelCalcMode: PanelCalcMode
-  panelState: DamageCalcPanelSnapshot | null
+  /**
+   * 面板快照 —— 「敌方与环境」与「额外 Buff」**只在这里**，没有顶层字段。
+   * **可缺省**：取不到子组件快照时落盘不写这个键；写 `null` 会在恢复端被静默跳过，
+   * 导致这两块被默认值覆盖（见 dev-docs/damage-calc-state-storage.md）。
+   */
+  panelState?: DamageCalcPanelSnapshot | null
+  /** @deprecated v4 起改用 `slotPanels`（迁移时读取，写完即清） */
   anomalySlotPanels?: Record<string, PanelStats>
+  /** 每个角色的两份局外面板（面板导入 / 词条导入）与当前激活那份 */
+  slotPanels?: Record<string, AgentPanelSources>
   convertSlotPanels?: DamageCalcConvertSlotPanels
   slots?: SchemeSlot[]
   staggerPhase?: StaggerPhase
@@ -173,8 +289,10 @@ export interface DamageCalcHistoryEntry {
   bangbooRefine: number
   panelCalcMode: PanelCalcMode
   panelState: DamageCalcSchemePanelSnapshot
-  /** 异常产生角色局外面板（按 agentId） */
+  /** @deprecated v4 起改用 `slotPanels`（迁移时读取，写完即清） */
   anomalySlotPanels?: Record<string, PanelStats>
+  /** 每个角色的两份局外面板（面板导入 / 词条导入）与当前激活那份 */
+  slotPanels?: Record<string, AgentPanelSources>
   /** 转模增益角色局外面板（按 agentId） */
   convertSlotPanels?: DamageCalcConvertSlotPanels
   /** 准备阶段 + 流程，按下标对齐 teamSlots */
@@ -206,7 +324,7 @@ export interface SchemeFolderMeta {
 }
 
 /** 方案库存储结构（对齐 zzz-dev 路径树） */
-export const SCHEME_STORE_VERSION = 3
+export const SCHEME_STORE_VERSION = 4
 
 export interface SchemeStore {
   version: number
@@ -224,7 +342,13 @@ export interface DamageCalcHistoryExport {
   currentId?: string | null
   /** 浏览器自建招式库全文。与方案里的 skillId 成套，导入时整包覆盖。 */
   customSkills?: import('@/types/calculator').Skill[]
+  /** 自建组全文 ∪ 方案引用到的组文档（含预设组抄本） */
+  skillGroups?: import('@/types/calculator').SkillGroup[]
+  /** 导出时方案引用了但本机找不到的招式/组 */
+  warnings?: string[]
 }
+
+export type SchemePackImportMode = 'replace' | 'merge'
 
 /** 导入结果 */
 export interface DamageCalcHistoryImportResult {
@@ -232,6 +356,13 @@ export interface DamageCalcHistoryImportResult {
   skipped: number
   errors: string[]
   customSkillCount: number
+  customGroupCount: number
+  renamed: number
+  remappedSkills: number
+  remappedGroups: number
+  missingSkillCount: number
+  missingGroupCount: number
+  mode: SchemePackImportMode
   /** 旧导出包没有自建招式字段，覆盖后流程可能变成「招式已删除」 */
   legacyPack: boolean
   loadedId: string

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onUnmounted, shallowRef, watch } from 'vue'
+import { computed, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ModeSidebar from '@/components/ModeSidebar.vue'
+import PanelImageExportActions from '@/components/shared/PanelImageExportActions.vue'
 import HistoryDetailPanel from '@/components/history/HistoryDetailPanel.vue'
 import HpLineChartPanel from '@/components/history/HpLineChartPanel.vue'
 import PhaseComparePanel from '@/components/history/PhaseComparePanel.vue'
@@ -30,6 +31,8 @@ const props = defineProps<{
 
 const route = useRoute()
 const mobileNavOpen = shallowRef(false)
+/** 面板滚动的宿主：整页滚动形态由它承担纵向滚动，切换面板时必须回到顶部 */
+const contentRef = ref<HTMLElement | null>(null)
 
 const activePanel = computed<ModePanelId>(() => {
   const routePanelId = route.meta.modePanelId
@@ -37,6 +40,25 @@ const activePanel = computed<ModePanelId>(() => {
     ? routePanelId
     : getFirstModePanelId(props.mode)
 })
+
+/**
+ * 需要整页滚动的面板（`mode-content--page-scroll` 的唯一开关）：它们的根节点是
+ * `panel-fill--page`（高度自然撑开、不裁剪），纵向滚动交给宿主 `.mode-content`。
+ * 折线图面板（hp-chart / phase-compare / monster-compare）已在全部模式并入此形态，
+ * 所以当前等于全部面板；将来若有面板改回「限制在一屏内、面板内部自己滚」，从表中移除即可。
+ */
+const PAGE_SCROLL_PANEL_IDS: readonly ModePanelId[] = [
+  'history',
+  'hp-chart',
+  'phase-compare',
+  'monster-compare',
+  'buff-overview',
+  'buff-compare',
+  'score-hp-table',
+  'hp-score-converter',
+]
+
+const isPageScrollPanel = computed(() => PAGE_SCROLL_PANEL_IDS.includes(activePanel.value))
 
 const modePanelBasePath = computed(() => {
   const basePath = route.meta.modePanelBasePath
@@ -50,6 +72,8 @@ const mobileSubtitle = computed(() => getModePanelLabel(props.mode, activePanel.
 
 watch(activePanel, () => {
   mobileNavOpen.value = false
+  // 滚动容器是共用的 `.mode-content`：不重置会让新面板继承上一个面板的滚动位置
+  if (contentRef.value) contentRef.value.scrollTop = 0
 })
 
 watch(mobileNavOpen, (open) => {
@@ -87,20 +111,21 @@ onUnmounted(() => {
       :mode-panel-base-path="modePanelBasePath"
       :back-to="backTo"
       :back-label="backLabel"
-    />
+    >
+      <!-- 只在这里填充，且只在「往期详细」面板出现：
+           角色计算器复用同一个侧栏但不填插槽，因此不会有这组按钮 -->
+      <template #actions>
+        <PanelImageExportActions
+          v-if="activePanel === 'history'"
+          :mode="mode"
+          :panel-id="activePanel"
+        />
+      </template>
+    </ModeSidebar>
     <main
+      ref="contentRef"
       class="mode-content"
-      :class="{
-        'mode-content--page-scroll':
-          (activePanel === 'history' &&
-            (mode === 'defense' || mode === 'crisis-assault' || mode === 'deduction')) ||
-          (activePanel === 'phase-compare' && (mode === 'defense' || mode === 'deduction')) ||
-          (activePanel === 'hp-chart' && mode === 'deduction') ||
-          activePanel === 'buff-compare' ||
-          activePanel === 'buff-overview' ||
-          activePanel === 'score-hp-table' ||
-          activePanel === 'hp-score-converter',
-      }"
+      :class="{ 'mode-content--page-scroll': isPageScrollPanel }"
     >
       <div id="mode-content-portal" class="mode-content-portal" />
       <KeepAlive>
@@ -123,15 +148,14 @@ onUnmounted(() => {
         <DefenseHpLineChartPanel
           v-else-if="activePanel === 'hp-chart' && mode === 'defense'"
           key="defense-hp-chart"
-          class="panel-fill"
+          class="panel-fill panel-fill--page"
         />
         <HpLineChartPanel
           v-else-if="
             activePanel === 'hp-chart' && (mode === 'crisis-assault' || mode === 'deduction')
           "
           key="hp-chart"
-          class="panel-fill"
-          :class="{ 'panel-fill--page': mode === 'deduction' }"
+          class="panel-fill panel-fill--page"
           :mode="mode"
         />
         <PhaseComparePanel
@@ -140,8 +164,7 @@ onUnmounted(() => {
             (mode === 'crisis-assault' || mode === 'defense' || mode === 'deduction')
           "
           key="phase-compare"
-          class="panel-fill"
-          :class="{ 'panel-fill--page': mode === 'defense' || mode === 'deduction' }"
+          class="panel-fill panel-fill--page"
           :mode="mode"
         />
         <MonsterComparePanel
@@ -150,7 +173,7 @@ onUnmounted(() => {
             (mode === 'crisis-assault' || mode === 'defense' || mode === 'deduction')
           "
           key="monster-compare"
-          class="panel-fill"
+          class="panel-fill panel-fill--page"
           :mode="mode"
         />
         <BuffOverviewPanel

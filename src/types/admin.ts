@@ -47,6 +47,8 @@ export interface AdminMonsterSlotContext {
   level?: string | number
   weakness?: string
   resistance?: string
+  /** 高抗性（40%）属性，为 resistance 的子集 */
+  resistanceHigh?: string
   bossImage?: string | null
   crisisBaseHp?: string | number | null
   hpCoeffPercent?: string | number | null
