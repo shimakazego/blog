@@ -1,0 +1,59 @@
+name: deploy-web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'vite.config.js'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    env:
+      GIT_TERMINAL_PROMPT: "0"
+
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 准备工具
+        run: apk add --no-cache git rsync
+
+      - name: 拉取代码
+        run: |
+          rm -rf /work
+          git clone --depth 1 "http://ljx:${{ secrets.GITEA_TOKEN }}@127.0.0.1:3000/ljx/blog.git" /work
+
+      - name: 安装依赖并构建
+        working-directory: /work
+        run: |
+          npm ci --no-audit --no-fund --registry=https://registry.npmmirror.com
+          npm run build
+
+      - name: 部署到 nginx-test（备份 + 后端图片同步）
+        run: |
+          STAMP=$(date +%Y%m%d-%H%M%S)
+          if [ -d /deploy-parent/html ]; then
+            cp -a /deploy-parent/html "/deploy-parent/html.bak-$STAMP"
+          fi
+          find /deploy-parent/html -mindepth 1 -delete
+          cp -a /work/dist/. /deploy-parent/html/
+          for d in character wengine drive_disc bangboo boss_image buff_image calculator_image guestbook_image attribute_image shiyu_boss; do
+            if [ -d "/zepp-backend/$d" ]; then
+              mkdir -p "/deploy-parent/html/$d"
+              cp -a "/zepp-backend/$d/." "/deploy-parent/html/$d/"
+            fi
+          done
+          chown -R root:root /deploy-parent/html 2>/dev/null || true
+          echo "deployed-stamp: $STAMP"
+
+      - name: 验证线上页面
+        run: |
+          wget -q -S -O /dev/null "http://192.168.1.133:15001/" 2>&1 | head -1

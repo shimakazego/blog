@@ -1,0 +1,50 @@
+name: deploy-server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/src/**'
+      - 'server/scripts/**'
+      - 'server/sql/**'
+      - 'server/package.json'
+      - 'server/Dockerfile'
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    env:
+      GIT_TERMINAL_PROMPT: "0"
+
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 准备工具
+        run: apk add --no-cache git rsync docker-cli docker-cli-compose
+
+      - name: 拉取代码
+        run: |
+          rm -rf /work
+          git clone --depth 1 "http://ljx:${{ secrets.GITEA_TOKEN }}@127.0.0.1:3000/ljx/blog.git" /work
+
+      - name: 同步代码到部署目录
+        run: |
+          cp -a /work/server/src/. /deploy/src/
+          cp -a /work/server/scripts/. /deploy/scripts/
+          cp -a /work/server/sql/. /deploy/sql/
+          cp -a /work/server/package.json /work/server/Dockerfile /deploy/
+
+      - name: 构建镜像
+        run: docker build --network=host -t server-app:latest /deploy
+
+      - name: 重建应用容器
+        run: docker compose -f /deploy/docker-compose.yml up -d app
+
+      - name: 验证
+        run: |
+          sleep 6
+          wget -qO- http://127.0.0.1:3001/api/health
+          echo

@@ -8,6 +8,8 @@ on:
 
 jobs:
   build-deploy:
+    # 仅 GitHub 运行（Gitea Actions 下跳过；NAS 部署由 .gitea/workflows/ 接管）
+    if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
 
     steps:
