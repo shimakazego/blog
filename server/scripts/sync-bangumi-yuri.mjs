@@ -143,11 +143,14 @@ function findDuplicateEntry(subject) {
             if(form === dbForm) {
                 return {entry, reason: `标题完全一致「${subject.name_cn || subject.name}」`}
             }
-            // 方向敏感规则：仅当“库内标题 = 候选标题 + 额外内容”时判重
-            // （豆瓣条目习惯为“中文名 日文名”，正则会剥离掉日文尾部；反之候选多出内容
-            //   很可能是续作/新剧场版等独立条目，一律放行，避免误吞）
-            if(dbForm.startsWith(form) && form.length >= 4) {
-                return {entry, reason: `库内标题以候选标题开头（疑似同作品的中日文写法差异）「${subject.name_cn || subject.name}」~「${entry.name}」`}
+            // 去重规则：
+            //   1) 任一形态完全一致 -> 同一作品
+            //   2) 库内形态「包含」候选形态（长度 >=5）-> 同一作品
+            //      （豆瓣条目名常为「中文译名 日文原名」拼接，日文原名是规范名；
+            //       不同译名的同一作品也能借此匹配，如「上伊那牡丹」两种译名）
+            //   反向（候选比库内多出内容）一律放行，避免误吞续作/新剧场版
+            if(dbForm.includes(form) && form.length >= 4) {
+                return {entry, reason: `库内标题包含候选标题（疑似同作品的不同译名/写法）「${subject.name_cn || subject.name}」~「${entry.name}」`}
             }
         }
     }
