@@ -5,37 +5,74 @@
              'is-placeholder-hidden': isLoaded
          }">
         <div class="foxy-promo-background-image foxy-promo-background-image-placeholder"/>
-        <div class="foxy-promo-background-image foxy-promo-background-image-full"/>
+        <div class="foxy-promo-background-image foxy-promo-background-image-full"
+             :style="backgroundStyle"/>
         <div :class="`foxy-promo-background-overlay-${faded ? `faded` : `default`}`"/>
     </div>
 </template>
 
 <script setup>
-import {onMounted, ref} from "vue"
+import {computed, onBeforeUnmount, onMounted, ref} from "vue"
 
-defineProps({
-    faded: Boolean
+const FALLBACK_IMAGE = "/images/logo/background.jpg"
+
+const props = defineProps({
+    faded: Boolean,
+    src: {
+        type: String,
+        default: ""
+    }
 })
 
+const imageUrl = ref(props.src || FALLBACK_IMAGE)
 const isLoaded = ref(false)
+let isMounted = true
+
+const backgroundStyle = computed(() => ({
+    backgroundImage: `url("${imageUrl.value}")`
+}))
+
+onBeforeUnmount(() => {
+    isMounted = false
+})
 
 onMounted(() => {
-    const heroImage = new Image()
-
-    heroImage.decoding = "async"
-    heroImage.src = "/images/logo/background.jpg"
-
     const markLoaded = () => {
-        isLoaded.value = true
+        if (isMounted) {
+            isLoaded.value = true
+        }
     }
 
-    if (heroImage.complete) {
-        markLoaded()
-        return
+    const load = (url) => {
+        const heroImage = new Image()
+
+        heroImage.decoding = "async"
+        heroImage.fetchPriority = "high"
+        heroImage.src = url
+
+        const loadFallback = () => {
+            if (url !== FALLBACK_IMAGE) {
+                imageUrl.value = FALLBACK_IMAGE
+                load(FALLBACK_IMAGE)
+            } else {
+                markLoaded()
+            }
+        }
+
+        if (heroImage.complete) {
+            if (heroImage.naturalWidth > 0) {
+                markLoaded()
+            } else {
+                loadFallback()
+            }
+            return
+        }
+
+        heroImage.addEventListener("load", markLoaded, {once: true})
+        heroImage.addEventListener("error", loadFallback, {once: true})
     }
 
-    heroImage.addEventListener("load", markLoaded, {once: true})
-    heroImage.addEventListener("error", markLoaded, {once: true})
+    load(imageUrl.value)
 })
 </script>
 
@@ -59,13 +96,14 @@ div.foxy-promo-background-image {
 }
 
 div.foxy-promo-background-image-placeholder {
-    background-image: url('/images/logo/background-placeholder.jpg');
+    background:
+        radial-gradient(circle at 50% 35%, rgba(70, 90, 120, 0.38), transparent 55%),
+        linear-gradient(135deg, #0d1117 0%, #1a2230 55%, #0d1117 100%);
     filter: blur(18px) saturate(1.05) brightness(0.94);
     transform: scale(1.12);
 }
 
 div.foxy-promo-background-image-full {
-    background-image: url('/images/logo/background.jpg');
     filter: saturate(1.18) contrast(1.08) brightness(1.03);
     opacity: 0;
     transform: scale(1.04);

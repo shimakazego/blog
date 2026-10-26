@@ -1,7 +1,7 @@
 <template>
     <header :id="id"
             class="foxy-header">
-        <BackgroundPromo :faded="false"/>
+        <BackgroundPromo :faded="false" :src="backgroundImage"/>
         <SakuraOverlay :count="18"/>
 
         <!-- Content -->
@@ -47,6 +47,7 @@ const props = defineProps({
     title: String,
     subtitle: String,
     logoUrl: String,
+    backgroundImage: String,
     showButton: Boolean,
     buttonLabel: String,
     buttonIcon: String,

@@ -3,6 +3,7 @@
     <PageHeader :id="props.id"
                 title="日冕手记"
                 logo-url="/images/logo/agency-logo.png"
+                :background-image="heroWallpaper"
                 :show-button="true"
                 button-icon="fa-solid fa-search"
                 button-label="关于我"
@@ -11,6 +12,7 @@
 
 <script setup>
 import PageHeader from "/src/vue/components/layout/PageHeader.vue"
+import {heroWallpaper} from "@/data/heroWallpapers.js"
 
 const props = defineProps({
     id: String
