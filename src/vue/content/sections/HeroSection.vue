@@ -1,7 +1,7 @@
 <template>
     <!-- Heading Section -->
     <PageHeader :id="props.id"
-                title="菅名のBlog"
+                title="日冕手记"
                 logo-url="/images/logo/agency-logo.png"
                 :show-button="true"
                 button-icon="fa-solid fa-search"
