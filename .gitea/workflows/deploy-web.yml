@@ -75,6 +75,8 @@ jobs:
             fi
           done
           chown -R root:root /deploy-parent/html 2>/dev/null || true
+          # 确保 nginx worker 可读；构建容器的 umask 可能产出 600/700
+          chmod -R a+rX /deploy-parent/html
           echo "deployed-stamp: $STAMP"
 
       - name: 验证线上页面
