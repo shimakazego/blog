@@ -36,6 +36,7 @@ jobs:
           rsync -a --delete \
             --exclude '.env' \
             --exclude 'node_modules' \
+            --exclude 'scripts/data/backups' \
             /work/server/zzz-hp-backend/ /volume1/docker/blog/server/zzz-hp-backend/
           cp /work/server/docker-compose.zzz.yml /volume1/docker/blog/server/docker-compose.zzz.yml
 
