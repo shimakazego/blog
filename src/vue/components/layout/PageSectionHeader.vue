@@ -1,7 +1,7 @@
 <template>
     <div class="foxy-section-header">
         <h1 class="foxy-section-header-title" v-html="parsedTitle"/>
-        <h5 class="foxy-section-header-subtitle pt-1" v-html="parsedSubtitle"/>
+        <h5 v-if="subtitle" class="foxy-section-header-subtitle pt-1" v-html="parsedSubtitle"/>
     </div>
 </template>
 

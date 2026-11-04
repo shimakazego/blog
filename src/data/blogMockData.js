@@ -141,6 +141,6 @@ export const funProjects = [
 
 export const aboutHighlights = [
     { label: "前端主力", value: "Vue 3", detail: "Element / Vite / 静态站部署" },
-    { label: "服务器", value: "NAS", detail: "J3455 + 16G，适合轻量服务" },
+    { label: "后端技术栈", value: "Node.js · Express", detail: "MySQL · Docker · Nginx · FRP" },
     { label: "内容方向", value: "ACGN", detail: "文章、百合动漫、游戏攻略、Web 玩具" }
 ]

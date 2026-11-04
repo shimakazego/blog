@@ -1,8 +1,7 @@
 <template>
     <PageSection :id="props.id"
                  variant="default">
-        <PageSectionHeader title="关于博主"
-                           subtitle="QAQ（暂时先用文字名片，后面再补头像和更完整的个人介绍）。"/>
+        <PageSectionHeader title="关于博主"/>
 
         <PageSectionContent>
             <div class="about-layout row g-4">
@@ -12,13 +11,13 @@
                         <div class="about-name">菅名のBlog</div>
                         <div class="about-role">前端工程师</div>
                         <p class="about-text">
-                            哦，猪包
+                            无论何时，要开心
                         </p>
                         <div class="about-tags">
                             <span class="badge rounded-pill text-bg-light about-tag">Vue 3</span>
                             <span class="badge rounded-pill text-bg-light about-tag">设计感</span>
                             <span class="badge rounded-pill text-bg-light about-tag">ACGN</span>
-                            <span class="badge rounded-pill text-bg-light about-tag">NAS</span>
+                            <span class="badge rounded-pill text-bg-light about-tag">Node.js</span>
                         </div>
                     </div>
                 </div>
@@ -39,10 +38,10 @@
                             <div class="about-card about-roadmap">
                                 <div class="about-roadmap-head">
                                     <div>
-                                        <div class="about-highlight-label">接下来会做</div>
-                                        <h3 class="about-roadmap-title">随便搬点有意思的内容</h3>
+                                        <div class="about-highlight-label">下一步</div>
+                                        <h3 class="about-roadmap-title">准备构建 Agent 智能体</h3>
                                     </div>
-                                    <span class="badge rounded-pill text-bg-warning">长期规划</span>
+                                    <span class="badge rounded-pill text-bg-success">进行中</span>
                                 </div>
 
                                 <div class="about-roadmap-list">
@@ -76,18 +75,18 @@ const props = defineProps({
 const roadmap = [
     {
         step: "01",
-        title: "前端模块先成型",
-        text: "把百合动漫、游戏攻略、开心一下和关于博主的结构固定下来。"
+        title: "站点主体已完成",
+        text: "前端、后端和内容模块基本稳定，后续以维护和细节补充为主。"
     },
     {
         step: "02",
-        title: "再接轻量后端",
-        text: "文章归档和游戏攻略后续大概率会接数据库、上传和图片存储。"
+        title: "构建 Agent 智能体",
+        text: "准备用 Python + LangGraph 搭一个智能体，接入大模型 API。"
     },
     {
         step: "03",
-        title: "最后做视觉微调",
-        text: "等内容骨架稳定后，再统一调色、字体和 Logo 方案。"
+        title: "探索 LLM 场景",
+        text: "具体用途还没定，可能做站内聊天、内容整理或主动推送。"
     }
 ]
 </script>

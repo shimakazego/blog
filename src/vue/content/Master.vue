@@ -8,7 +8,7 @@
         title="关于本站"
         faIcon="pi pi-lightbulb me-2"
         :description="[
-          `这里是菅名のBlog 的前端起点，后续会逐步补充文章、百合动漫、游戏攻略和 Web 小玩具。`,
+          `这里是菅名のBlog，记录文章、百合动漫、游戏攻略和 Web 小玩具，后面继续折腾 Agent 与 LLM。`,
         ]"
         :links="[
           { label: `百合动漫`, href: `#yuri`, faIcon: null },
@@ -51,6 +51,11 @@
         url="https://github.com/shimakazego"
         license="All Rights Reserved."
       />
+      <div class="footer-icp">
+        <a href="https://beian.miit.gov.cn/"
+           target="_blank"
+           rel="noopener noreferrer">粤ICP备2026172488号</a>
+      </div>
     </FooterBlock>
   </Footer>
 
@@ -73,4 +78,21 @@ const showSiteChrome = computed(() => !route.meta.hideSiteChrome);
 
 <style lang="scss" scoped>
 @import "/src/scss/_theming.scss";
+
+.footer-icp {
+    margin-top: 0.55rem;
+    font-size: 0.82rem;
+    line-height: 1.4;
+
+    a {
+        color: $light-5;
+        text-decoration: none;
+        transition: color 160ms ease;
+    }
+
+    a:hover {
+        color: $white;
+        text-decoration: underline;
+    }
+}
 </style>
