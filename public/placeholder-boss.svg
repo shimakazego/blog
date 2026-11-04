@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="484" height="668" viewBox="0 0 484 668">
+  <rect width="484" height="668" fill="#17161d"/>
+  <rect x="24" y="24" width="436" height="620" rx="18" fill="#211f29" stroke="#3a3745" stroke-width="2"/>
+  <circle cx="242" cy="258" r="92" fill="#2e2b38" stroke="#4a4658" stroke-width="2"/>
+  <path d="M190 300c18-30 42-46 52-64 10-18 18-39 18-39s8 21 18 39c10 18 34 34 52 64" fill="none" stroke="#6a6578" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="242" cy="206" r="20" fill="#6a6578"/>
+  <text x="242" y="400" text-anchor="middle" fill="#b8b1c8" font-family="'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="26" font-weight="600">暂无立绘</text>
+  <text x="242" y="438" text-anchor="middle" fill="#7e778d" font-family="'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="16" letter-spacing="2">IMAGE PENDING</text>
+  <text x="242" y="548" text-anchor="middle" fill="#5f596d" font-family="'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="14">测试服怪物素材尚未公开</text>
+</svg>

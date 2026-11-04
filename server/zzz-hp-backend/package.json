@@ -1,0 +1,41 @@
+{
+  "name": "zzz-hp-backend",
+  "version": "3.2.6",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test scripts/nanoka-buff-editor.test.mjs scripts/security-hardening.test.mjs scripts/auth-route-wiring.test.mjs scripts/season-display-id.test.mjs scripts/affix-preset-route-wiring.test.mjs scripts/affix-preset-save-validation.test.mjs scripts/anomaly-bar-coefficient.test.mjs scripts/nanoka-basics-mapper.test.mjs scripts/nanoka-skill-mapper.test.mjs scripts/agent-stale-write.test.mjs scripts/site-info-overwrite.test.mjs scripts/shared-scheme-import.test.mjs scripts/boss-weakness-sets.test.mjs",
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js",
+    "import:nanoka": "node scripts/import-nanoka.mjs",
+    "import:nanoka:dry": "node scripts/import-nanoka.mjs --dry-run",
+    "import:nanoka:range": "node scripts/import-nanoka-range.mjs",
+    "import:nanoka-skills": "node scripts/import-nanoka-skills.mjs",
+    "import:nanoka-skills:all": "node scripts/import-nanoka-skills.mjs --all",
+    "import:nanoka-skills:write": "node scripts/import-nanoka-skills.mjs --write",
+    "import:nanoka-skills:all:write": "node scripts/import-nanoka-skills.mjs --all --write",
+    "delete:defense-season": "node scripts/delete-defense-season.mjs",
+    "export:calculator-buffs": "node scripts/export-calculator-buffs.mjs",
+    "export:boss-info": "node scripts/export-boss-info.mjs",
+    "export:db-json": "node scripts/export-db-json.mjs",
+    "export:affix-preset": "node scripts/export-affix-preset.mjs",
+    "restore:affix-preset": "node scripts/restore-affix-preset.mjs",
+    "sync:calculator-avatars": "node scripts/sync-calculator-public-avatars.mjs",
+    "upsert:agent": "node scripts/upsert-agent.mjs",
+    "seed:admin": "node scripts/seed-admin.mjs",
+    "set:admin-password": "node scripts/set-admin-password.mjs",
+    "export:site-content": "node scripts/export-site-content.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "body-parser": "^1.20.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.1",
+    "helmet": "^8.1.0",
+    "multer": "^2.2.0",
+    "mysql2": "^3.12.0",
+    "tencentcloud-sdk-nodejs": "^4.1.289"
+  }
+}

@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { HpChartPoint } from '@/api/crisisAssault'
 import { fetchDefenseSeasons } from '@/api/defense'
+import { compareSeasonDesc, defaultActiveSeasonIndex } from '@/utils/seasonTimeline'
 import type { DefenseEnemy, DefenseSeason, DefenseVariant } from '@/types/defense'
 import type { AdminBuffSlotContext, AdminMonsterSlotContext } from '@/types/admin'
 import { decodeDefenseBossId } from '@/utils/defenseId'
@@ -62,12 +63,14 @@ const roomHpIndex = ref(0)
 const showPicker = ref(false)
 
 function defaultPublicSeasonIndex(list: DefenseSeason[]): number {
-  if (!list.length) return 0
-  for (let index = list.length - 1; index >= 0; index--) {
-    if (!list[index]?.isHidden) return index
-  }
-  return list.length - 1
+  return defaultActiveSeasonIndex(list)
 }
+
+const seasonPickerItems = computed(() =>
+  seasons.value
+    .map((season, index) => ({ season, index }))
+    .sort((a, b) => compareSeasonDesc(a.season, b.season)),
+)
 
 async function loadSeasons() {
   const token = seasonsLoadEpoch.next()
@@ -671,6 +674,11 @@ function formatEnemyResistance(value?: string) {
                 <span class="phase-version">
                   {{ currentSeason.version }} {{ currentSeason.phase }}
                   <span v-if="currentSeason.pendingCleanup" class="phase-trash-badge">已删除未清理</span>
+                  <span
+                    v-else-if="currentSeason.statusLabel"
+                    class="phase-status-badge"
+                    :class="`phase-status-badge--${currentSeason.statusKey}`"
+                  >{{ currentSeason.statusLabel }}</span>
                   <span v-else-if="currentSeason.isHidden" class="phase-hidden-badge">未公开</span>
                 </span>
                 <span class="phase-date">{{ currentSeason.dateRange }}</span>
@@ -739,24 +747,29 @@ function formatEnemyResistance(value?: string) {
                 <div class="phase-grid-scroll">
                   <div class="phase-grid">
                     <button
-                      v-for="(season, index) in seasons"
-                      :key="season.id"
+                      v-for="item in seasonPickerItems"
+                      :key="item.season.id"
                       type="button"
                       class="phase-card"
                       :class="{
-                        active: index === currentIndex,
-                        'phase-card--hidden': season.isHidden,
-                        'phase-card--trash': season.pendingCleanup,
+                        active: item.index === currentIndex,
+                        'phase-card--hidden': item.season.isHidden,
+                        'phase-card--trash': item.season.pendingCleanup,
                       }"
-                      @click="selectSeason(index)"
+                      @click="selectSeason(item.index)"
                     >
                       <span class="phase-card-version">
-                        {{ season.version }} {{ season.phase }}
-                        <span v-if="season.pendingCleanup" class="phase-trash-badge">已删除未清理</span>
-                        <span v-else-if="season.isHidden" class="phase-hidden-badge">未公开</span>
+                        {{ item.season.version }} {{ item.season.phase }}
+                        <span v-if="item.season.pendingCleanup" class="phase-trash-badge">已删除未清理</span>
+                        <span
+                          v-else-if="item.season.statusLabel"
+                          class="phase-status-badge"
+                          :class="`phase-status-badge--${item.season.statusKey}`"
+                        >{{ item.season.statusLabel }}</span>
+                        <span v-else-if="item.season.isHidden" class="phase-hidden-badge">未公开</span>
                       </span>
-                      <span class="phase-card-date">{{ season.dateRange }}</span>
-                      <span class="phase-card-id">ID: {{ season.seasonId }}</span>
+                      <span class="phase-card-date">{{ item.season.dateRange }}</span>
+                      <span class="phase-card-id">ID: {{ item.season.seasonId }}</span>
                     </button>
                   </div>
                 </div>
@@ -1192,6 +1205,33 @@ function formatEnemyResistance(value?: string) {
   background: color-mix(in srgb, #f5c451 18%, transparent);
   border: 1px solid color-mix(in srgb, #f5c451 45%, transparent);
 }
+
+.phase-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #8bd3ff;
+  background: color-mix(in srgb, #8bd3ff 16%, transparent);
+  border: 1px solid color-mix(in srgb, #8bd3ff 42%, transparent);
+  white-space: nowrap;
+}
+
+.phase-status-badge--active {
+  color: #7ee2a8;
+  background: color-mix(in srgb, #7ee2a8 16%, transparent);
+  border-color: color-mix(in srgb, #7ee2a8 42%, transparent);
+}
+
+.phase-status-badge--ended {
+  color: #b7b7c4;
+  background: color-mix(in srgb, #b7b7c4 14%, transparent);
+  border-color: color-mix(in srgb, #b7b7c4 36%, transparent);
+}
+
 
 .phase-trash-badge {
   display: inline-flex;

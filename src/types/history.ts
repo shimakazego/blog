@@ -71,6 +71,10 @@ export interface PhaseData {
   /** 展示用期数文案，如「第 1 期」 */
   phase: string
   dateRange: string
+  source?: 'live' | 'test'
+  statusKey?: 'upcoming' | 'active' | 'ended' | 'unknown'
+  statusLabel?: string
+  seasonId?: string | null
   tid: string
   rawHp: string
   totalHp?: number

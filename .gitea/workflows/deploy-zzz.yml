@@ -1,0 +1,73 @@
+name: deploy-zzz
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/zzz-hp-backend/**'
+      - 'server/docker-compose.zzz.yml'
+      - 'nginx/blog-zzz.conf'
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    env:
+      GIT_TERMINAL_PROMPT: "0"
+
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 准备工具
+        run: |
+          sed -i 's#dl-cdn.alpinelinux.org#mirrors.aliyun.com#' /etc/apk/repositories
+          apk add --no-cache git rsync docker-cli docker-cli-compose
+
+      - name: 拉取代码
+        run: |
+          rm -rf /work
+          git clone --depth 1 "http://ljx:${{ secrets.GITEA_TOKEN }}@127.0.0.1:3000/ljx/blog.git" /work
+
+      - name: 同步 ZZZ 后端代码
+        run: |
+          mkdir -p /volume1/docker/blog/server/zzz-hp-backend
+          rsync -a --delete \
+            --exclude '.env' \
+            --exclude 'node_modules' \
+            /work/server/zzz-hp-backend/ /volume1/docker/blog/server/zzz-hp-backend/
+          cp /work/server/docker-compose.zzz.yml /volume1/docker/blog/server/docker-compose.zzz.yml
+
+      - name: 首次迁移环境变量
+        run: |
+          if [ ! -f /volume1/docker/blog/server/zzz-hp-backend/.env ]; then
+            cp /volume1/docker/zzz-hp-backend/app/.env /volume1/docker/blog/server/zzz-hp-backend/.env
+            chmod 600 /volume1/docker/blog/server/zzz-hp-backend/.env
+          fi
+
+      - name: 构建镜像
+        run: docker build --network=host -t zzz-hp-backend:latest /volume1/docker/blog/server/zzz-hp-backend
+
+      - name: 切换容器
+        run: |
+          # 旧容器不是由 compose 管理，先移除释放 3010；新容器保留同名，cron wrapper 不用改。
+          docker rm -f zzz-hp-backend 2>/dev/null || true
+          cd /volume1/docker/blog/server
+          docker compose -p server -f docker-compose.zzz.yml up -d --no-build
+
+      - name: 验证
+        run: |
+          i=0
+          while [ $i -lt 8 ]; do
+            sleep 5
+            i=$((i+1))
+            if wget -qO- http://127.0.0.1:3010/health; then
+              echo
+              echo "zzz health check passed (attempt $i)"
+              exit 0
+            fi
+          done
+          echo "zzz health check failed after 8 attempts"
+          docker logs --tail 80 zzz-hp-backend || true
+          exit 1

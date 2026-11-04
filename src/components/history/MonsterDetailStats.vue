@@ -135,6 +135,13 @@ function onImageKeydown(event: KeyboardEvent) {
   event.preventDefault()
   emit('imageClick')
 }
+
+function onImageError(event: Event) {
+  const image = event.target as HTMLImageElement
+  if (!image.src.endsWith('/placeholder-boss.svg')) {
+    image.src = '/placeholder-boss.svg'
+  }
+}
 </script>
 
 <template>
@@ -152,7 +159,12 @@ function onImageKeydown(event: KeyboardEvent) {
         @click="onImageClick"
         @keydown="onImageKeydown"
       >
-        <img v-if="imageUrl" :src="imageUrl" :alt="imageAlt || record?.boss_name || ''" />
+        <img
+          v-if="imageUrl"
+          :src="imageUrl"
+          :alt="imageAlt || record?.boss_name || ''"
+          @error="onImageError"
+        />
         <span v-else class="monster-detail-placeholder">怪物图片</span>
       </div>
       <p v-if="imageHint" class="monster-detail-image-hint">{{ imageHint }}</p>

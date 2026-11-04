@@ -81,6 +81,9 @@ export interface DefenseSeason {
   phase: string
   dateRange: string
   seasonId: string
+  source?: 'live' | 'test'
+  statusKey?: 'upcoming' | 'active' | 'ended' | 'unknown'
+  statusLabel?: string
   nodeType: string
   isHidden?: boolean
   /** 管理端软删除：已删除未清理 */

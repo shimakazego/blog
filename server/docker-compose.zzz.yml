@@ -1,0 +1,32 @@
+services:
+  zzz:
+    image: zzz-hp-backend:latest
+    build:
+      context: ./zzz-hp-backend
+      dockerfile: Dockerfile
+    container_name: zzz-hp-backend
+    restart: unless-stopped
+    env_file:
+      - ./zzz-hp-backend/.env
+    environment:
+      PORT: 3010
+      DB_HOST: blog-mysql
+      DB_PORT: 3306
+      DB_NAME: zzz
+    ports:
+      - "3010:3010"
+    volumes:
+      - zzz_boss_images:/app/boss_image
+      - zzz_shiyu_images:/app/shiyu_boss
+      - zzz_buff_images:/app/buff_image
+    networks:
+      - server_default
+
+volumes:
+  zzz_boss_images:
+  zzz_shiyu_images:
+  zzz_buff_images:
+
+networks:
+  server_default:
+    external: true

@@ -1,0 +1,59 @@
+import {
+  getBossChartHistory,
+  getBossNames,
+  getCrisisAssaultPhases,
+} from '../services/crisisAssaultService.js'
+import { isValidAdminSession } from '../services/adminSessionService.js'
+import { success, fail, failInternal } from '../utils/response.js'
+
+function readIsSiteAdmin(req) {
+  const auth = req.headers.authorization
+  if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
+    const token = auth.slice(7).trim()
+    if (isValidAdminSession(token)) return true
+  }
+  const headerToken = req.headers['x-admin-token']
+  if (typeof headerToken === 'string' && isValidAdminSession(headerToken.trim())) {
+    return true
+  }
+  return false
+}
+
+export async function listPhases(req, res) {
+  try {
+    const includeHidden = readIsSiteAdmin(req)
+    const data = await getCrisisAssaultPhases({ includeHidden })
+    return success(res, data)
+  } catch (err) {
+    return failInternal(res, err, '获取危局强袭战数据失败')
+  }
+}
+
+export async function listBossNames(req, res) {
+  try {
+    const roomType = req.query.roomType
+    const data = await getBossNames({ roomType })
+    return success(res, data)
+  } catch (err) {
+    return failInternal(res, err, '获取 Boss 列表失败')
+  }
+}
+
+export async function getBossChart(req, res) {
+  const bossName = req.query.boss_name
+  if (!bossName) {
+    return fail(res, '请提供 boss_name 参数', 400)
+  }
+
+  try {
+    const includeHidden = readIsSiteAdmin(req)
+    const roomType = req.query.roomType
+    const data = await getBossChartHistory(bossName, { includeHidden, roomType })
+    if (!data.length) {
+      return fail(res, '未找到该 Boss 数据', 404)
+    }
+    return success(res, data)
+  } catch (err) {
+    return failInternal(res, err, '获取 Boss 折线图数据失败')
+  }
+}

@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchCrisisAssaultPhases, findPhaseIndexFromChartPoint, type HpChartPoint } from '@/api/crisisAssault'
+import { defaultActiveSeasonIndex } from '@/utils/seasonTimeline'
 import {
   FS_HP_RATIO_NORMAL,
   HARD_SCORE_MARKERS,
@@ -454,12 +455,8 @@ defineExpose({
   },
 })
 
-function defaultPublicPhaseIndex(list: { isHidden?: boolean }[]): number {
-  if (!list.length) return 0
-  for (let index = list.length - 1; index >= 0; index--) {
-    if (!list[index]?.isHidden) return index
-  }
-  return list.length - 1
+function defaultPublicPhaseIndex(list: { isHidden?: boolean; dateRange?: string; source?: 'live' | 'test' }[]): number {
+  return defaultActiveSeasonIndex(list)
 }
 
 async function loadCrisisAssaultData() {
@@ -503,6 +500,13 @@ function applyChartPointSelection() {
   if (!props.chartPoint || !phases.value.length) return
   const index = findPhaseIndexFromChartPoint(phases.value, props.chartPoint)
   if (index >= 0) currentIndex.value = index
+}
+
+function onBossImageError(event: Event) {
+  const image = event.target as HTMLImageElement
+  if (!image.src.endsWith('/placeholder-boss.svg')) {
+    image.src = '/placeholder-boss.svg'
+  }
 }
 
 onMounted(loadCrisisAssaultData)
@@ -619,6 +623,11 @@ function closePhasePicker() {
                 <span class="phase-version">
                   {{ currentPhase.version }} {{ currentPhase.phase }}
                   <span v-if="currentPhase.pendingCleanup" class="phase-trash-badge">已删除未清理</span>
+                  <span
+                    v-else-if="currentPhase.statusLabel"
+                    class="phase-status-badge"
+                    :class="`phase-status-badge--${currentPhase.statusKey}`"
+                  >{{ currentPhase.statusLabel }}</span>
                   <span v-else-if="currentPhase.isHidden" class="phase-hidden-badge">未公开</span>
                 </span>
                 <span class="phase-date">{{ currentPhase.dateRange }}</span>
@@ -817,7 +826,12 @@ function closePhasePicker() {
             <div class="enemy-main">
               <div class="enemy-body">
                 <div class="enemy-image">
-                  <img v-if="enemy.imageUrl" :src="enemy.imageUrl" :alt="enemy.label" />
+                  <img
+                    v-if="enemy.imageUrl"
+                    :src="enemy.imageUrl"
+                    :alt="enemy.label"
+                    @error="onBossImageError"
+                  />
                   <span v-else class="image-placeholder">怪物图片</span>
                 </div>
                 <div class="enemy-info">
@@ -973,7 +987,12 @@ function closePhasePicker() {
             <div class="enemy-main">
               <div class="enemy-body">
                 <div class="enemy-image">
-                  <img v-if="enemy.imageUrl" :src="enemy.imageUrl" :alt="enemy.label" />
+                  <img
+                    v-if="enemy.imageUrl"
+                    :src="enemy.imageUrl"
+                    :alt="enemy.label"
+                    @error="onBossImageError"
+                  />
                   <span v-else class="image-placeholder">怪物图片</span>
                 </div>
                 <div class="enemy-info">
@@ -1404,6 +1423,33 @@ function closePhasePicker() {
   background: color-mix(in srgb, #f5c451 18%, transparent);
   border: 1px solid color-mix(in srgb, #f5c451 45%, transparent);
 }
+
+.phase-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #8bd3ff;
+  background: color-mix(in srgb, #8bd3ff 16%, transparent);
+  border: 1px solid color-mix(in srgb, #8bd3ff 42%, transparent);
+  white-space: nowrap;
+}
+
+.phase-status-badge--active {
+  color: #7ee2a8;
+  background: color-mix(in srgb, #7ee2a8 16%, transparent);
+  border-color: color-mix(in srgb, #7ee2a8 42%, transparent);
+}
+
+.phase-status-badge--ended {
+  color: #b7b7c4;
+  background: color-mix(in srgb, #b7b7c4 14%, transparent);
+  border-color: color-mix(in srgb, #b7b7c4 36%, transparent);
+}
+
 
 .phase-trash-badge {
   display: inline-flex;

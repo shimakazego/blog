@@ -18,6 +18,7 @@ import {
   type DefenseRoomHpOption,
 } from '@/utils/defenseHp'
 import { getAdminToken, isAdminAuthenticated } from '@/utils/adminAuth'
+import { resolveSeasonStatus } from '@/utils/seasonTimeline'
 
 export { filterChartPointsByLabels }
 
@@ -40,8 +41,16 @@ function adminAuthHeaders(): HeadersInit {
 }
 
 function normalizeSeason(season: DefenseSeason): DefenseSeason {
+  const status = resolveSeasonStatus({
+    dateRange: season.dateRange,
+    source: season.source,
+    version: season.version,
+  })
   return {
     ...season,
+    source: status.source,
+    statusKey: status.key,
+    statusLabel: status.label,
     isHidden: Boolean(season.isHidden),
     pendingCleanup: Boolean(season.pendingCleanup),
     deletedAt: season.deletedAt ?? null,

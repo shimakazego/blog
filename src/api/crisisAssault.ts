@@ -9,6 +9,7 @@ import {
 import { isCrisisBossId, isCrisisBuffId } from '@/utils/defenseId'
 import { getAdminToken, isAdminAuthenticated } from '@/utils/adminAuth'
 import { formatDateRange, formatHp, parseWeaknessElements, resolveAssetUrl, splitBuffLines } from '@/utils/gameData'
+import { resolveSeasonStatus } from '@/utils/seasonTimeline'
 
 export type CrisisHpChartMode = 'normal' | 'hard'
 export type CrisisBossRoomType = 'normal' | 'hard' | 'all'
@@ -60,6 +61,8 @@ interface ApiPhase {
   phaseLabel: string
   startDate: string | null
   endDate: string | null
+  source?: 'live' | 'test'
+  seasonId?: string | null
   isHidden?: boolean
   pendingCleanup?: boolean
   deletedAt?: string | null
@@ -181,6 +184,11 @@ function mapBossToEnemy(boss: ApiBoss): EnemySlot {
 }
 
 function toPhaseData(phase: ApiPhase): PhaseData {
+  const status = resolveSeasonStatus({
+    dateRange: formatDateRange(phase.startDate, phase.endDate),
+    source: phase.source,
+    version: phase.version,
+  })
   const bosses = [...phase.bosses]
     .filter((boss) => isCrisisBossId(boss.id))
     .sort((a, b) => crisisRoomSortKey(a.room) - crisisRoomSortKey(b.room))
@@ -210,6 +218,10 @@ function toPhaseData(phase: ApiPhase): PhaseData {
     version: phase.version,
     phase: phase.phaseLabel,
     dateRange: formatDateRange(phase.startDate, phase.endDate),
+    source: status.source,
+    statusKey: status.key,
+    statusLabel: status.label,
+    seasonId: phase.seasonId ?? null,
     tid: phase.tid != null ? String(phase.tid) : '—',
     isHidden: Boolean(phase.isHidden),
     pendingCleanup: Boolean(phase.pendingCleanup),

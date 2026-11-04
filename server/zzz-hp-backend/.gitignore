@@ -1,0 +1,5 @@
+node_modules/
+.env
+
+# 本地数据库整库/计算器快照备份，体积大且不属于运行时代码
+scripts/data/backups/

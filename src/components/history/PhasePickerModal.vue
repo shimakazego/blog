@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { compareSeasonDesc } from '@/utils/seasonTimeline'
 
 /** 选期卡片的最小数据结构：往期详细直接传 PhaseData，对比面板用图表点适配 */
 export interface PhasePickerItem {
@@ -9,6 +10,9 @@ export interface PhasePickerItem {
   dateRange: string
   /** 线程 ID；缺失时不显示 ID 行（对比面板的图表点没有 tid） */
   tid?: string
+  source?: 'live' | 'test'
+  statusKey?: 'upcoming' | 'active' | 'ended' | 'unknown'
+  statusLabel?: string
   isHidden?: boolean
   pendingCleanup?: boolean
 }
@@ -31,6 +35,13 @@ const emit = defineEmits<{
   select: [index: number]
   close: []
 }>()
+
+/** 期数选择器统一按时间倒序展示，但保留原始数组下标用于选中/对比。 */
+const pickerItems = computed(() =>
+  props.phases
+    .map((phase, index) => ({ phase, index }))
+    .sort((a, b) => compareSeasonDesc(a.phase, b.phase)),
+)
 
 const pickerScrollRef = ref<HTMLElement | null>(null)
 const isPickerDragging = ref(false)
@@ -143,24 +154,29 @@ onBeforeUnmount(() => {
         >
           <div class="phase-grid">
             <button
-              v-for="(phase, index) in phases"
-              :key="phase.id"
+              v-for="item in pickerItems"
+              :key="item.phase.id"
               type="button"
               class="phase-card"
               :class="{
-                active: isCardActive(index),
-                'phase-card--hidden': phase.isHidden,
-                'phase-card--trash': phase.pendingCleanup,
+                active: isCardActive(item.index),
+                'phase-card--hidden': item.phase.isHidden,
+                'phase-card--trash': item.phase.pendingCleanup,
               }"
-              :data-index="index"
+              :data-index="item.index"
             >
               <span class="phase-card-version">
-                {{ phase.version }} {{ phase.phase }}
-                <span v-if="phase.pendingCleanup" class="phase-trash-badge">已删除未清理</span>
-                <span v-else-if="phase.isHidden" class="phase-hidden-badge">未公开</span>
+                {{ item.phase.version }} {{ item.phase.phase }}
+                <span v-if="item.phase.pendingCleanup" class="phase-trash-badge">已删除未清理</span>
+                <span
+                  v-else-if="item.phase.statusLabel"
+                  class="phase-status-badge"
+                  :class="`phase-status-badge--${item.phase.statusKey}`"
+                >{{ item.phase.statusLabel }}</span>
+                <span v-else-if="item.phase.isHidden" class="phase-hidden-badge">未公开</span>
               </span>
-              <span class="phase-card-date">{{ phase.dateRange }}</span>
-              <span v-if="phase.tid" class="phase-card-id">ID: {{ phase.tid }}</span>
+              <span class="phase-card-date">{{ item.phase.dateRange }}</span>
+              <span v-if="item.phase.tid" class="phase-card-id">ID: {{ item.phase.tid }}</span>
             </button>
           </div>
         </div>
@@ -325,6 +341,39 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, #f5c451 18%, transparent);
   border: 1px solid color-mix(in srgb, #f5c451 45%, transparent);
 }
+
+.phase-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #8bd3ff;
+  background: color-mix(in srgb, #8bd3ff 16%, transparent);
+  border: 1px solid color-mix(in srgb, #8bd3ff 42%, transparent);
+  white-space: nowrap;
+}
+
+.phase-status-badge--active {
+  color: #7ee2a8;
+  background: color-mix(in srgb, #7ee2a8 16%, transparent);
+  border-color: color-mix(in srgb, #7ee2a8 42%, transparent);
+}
+
+.phase-status-badge--ended {
+  color: #b7b7c4;
+  background: color-mix(in srgb, #b7b7c4 14%, transparent);
+  border-color: color-mix(in srgb, #b7b7c4 36%, transparent);
+}
+
+.phase-status-badge--unknown {
+  color: #f5c451;
+  background: color-mix(in srgb, #f5c451 14%, transparent);
+  border-color: color-mix(in srgb, #f5c451 38%, transparent);
+}
+
 
 .phase-trash-badge {
   display: inline-flex;
