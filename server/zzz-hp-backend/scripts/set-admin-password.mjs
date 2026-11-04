@@ -43,7 +43,7 @@ export async function runAdminPasswordRotation({
       host: environment.DB_HOST || 'localhost',
       port: Number(environment.DB_PORT) || 3306,
       user: environment.DB_USER || 'root',
-      password: environment.DB_PASSWORD || '123456',
+      password: environment.DB_PASSWORD || '',
       database: environment.DB_NAME || 'zzz',
     })
 

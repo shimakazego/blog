@@ -60,7 +60,7 @@ function ensureImage(destRel, fallbackRel) {
 const conn = await mysql.createConnection({
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '123456',
+  password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'zzz',
 })
 

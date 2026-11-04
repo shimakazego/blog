@@ -79,6 +79,8 @@ jobs:
           chmod -R a+rX /deploy-parent/html
           echo "deployed-stamp: $STAMP"
 
-      - name: 验证线上页面
+      - name: 验证部署文件
         run: |
-          wget -q -S -O /dev/null "http://192.168.1.133:15001/" 2>&1 | head -1
+          test -s /deploy-parent/html/index.html
+          test -d /deploy-parent/html/boss_image
+          grep -q 'assets/index-' /deploy-parent/html/index.html

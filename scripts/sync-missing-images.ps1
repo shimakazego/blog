@@ -1,7 +1,7 @@
 # 备案完成后执行：从生产站（zzz-hp.top）补齐缺失的运营图片到 NAS
 # 缺图清单为 2026-10-18 全量扫描发现（git/后端/本地均无、Wayback 无存档）
 # 用法:
-#   powershell -File scripts/sync-missing-images.ps1 -NasHost 192.168.1.133
+#   powershell -File scripts/sync-missing-images.ps1 -NasHost <NAS_IP>
 # 需要: 环境变量 SSH_PASSWORD（NAS sudo 密码）；zzz-hp.top 已恢复访问
 param(
     [Parameter(Mandatory = $true)]
