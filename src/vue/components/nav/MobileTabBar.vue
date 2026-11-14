@@ -8,7 +8,19 @@
                 :aria-current="item.isActive ? 'page' : undefined"
                 @click="_onItemClicked(item)">
             <span class="foxy-mobile-tab-icon-shell">
-                <i :class="item.faIcon" class="foxy-mobile-tab-icon"/>
+                <img v-if="customIcon(item) === 'bangboo'"
+                     class="foxy-mobile-tab-img is-bangboo"
+                     src="/zzz-assets/Bangboo.gif"
+                     alt=""
+                     aria-hidden="true"/>
+                <img v-else-if="customIcon(item) === 'giraffe'"
+                     class="foxy-mobile-tab-img is-giraffe"
+                     src="/images/nav/yuri-giraffe.png"
+                     alt=""
+                     aria-hidden="true"/>
+                <i v-else
+                   :class="item.faIcon"
+                   class="foxy-mobile-tab-icon"/>
             </span>
             <span class="foxy-mobile-tab-label">{{ item.label }}</span>
         </button>
@@ -20,12 +32,22 @@ import {useRouter} from "vue-router"
 
 const router = useRouter()
 
+/* 移动端专属的图片图标：原版素材，不改色不重绘 */
+const CUSTOM_ICON_BY_PATH = {
+    "#game-guides": "bangboo",
+    "#yuri": "giraffe"
+}
+
 const props = defineProps({
     items: {
         type: Array,
         default: () => []
     }
 })
+
+const customIcon = (item) => {
+    return CUSTOM_ICON_BY_PATH[item?.path] || null
+}
 
 const _onItemClicked = (item) => {
     if(!item?.path) {
@@ -81,7 +103,8 @@ button.foxy-mobile-tab {
 
     border: 0;
     background: transparent;
-    color: rgba(255, 255, 255, 0.58);
+    /* 所有图标统一为白色系（图片 logo 保持原色，不做染色） */
+    color: rgba(255, 255, 255, 0.55);
 
     font-family: $font-family-base;
     font-size: 0.66rem;
@@ -96,8 +119,8 @@ span.foxy-mobile-tab-icon-shell {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 2rem;
-    height: 1.35rem;
+    width: 2.1rem;
+    height: 1.55rem;
     border-radius: 0.45rem;
     transition: background 0.2s ease, transform 0.15s ease;
 }
@@ -105,6 +128,26 @@ span.foxy-mobile-tab-icon-shell {
 i.foxy-mobile-tab-icon {
     font-size: 1.02rem;
     line-height: 1;
+}
+
+img.foxy-mobile-tab-img {
+    display: block;
+    width: 1.45rem;
+    height: 1.45rem;
+    object-fit: contain;
+    opacity: 0.55;
+    transition: opacity 0.2s ease;
+}
+
+img.foxy-mobile-tab-img.is-bangboo {
+    width: 1.5rem;
+    height: 1.5rem;
+}
+
+img.foxy-mobile-tab-img.is-giraffe {
+    width: 1.32rem;
+    height: 1.32rem;
+    border-radius: 50%;
 }
 
 span.foxy-mobile-tab-label {
@@ -119,10 +162,19 @@ button.foxy-mobile-tab:active span.foxy-mobile-tab-icon-shell {
 }
 
 button.foxy-mobile-tab.is-active {
-    color: lighten($primary, 16%);
+    color: #ffffff;
 }
 
 button.foxy-mobile-tab.is-active span.foxy-mobile-tab-icon-shell {
-    background: rgba($primary, 0.18);
+    background: rgba($primary, 0.28);
+    box-shadow: 0 0 12px rgba($primary, 0.18);
+}
+
+button.foxy-mobile-tab.is-active img.foxy-mobile-tab-img {
+    opacity: 1;
+}
+
+button.foxy-mobile-tab.is-active span.foxy-mobile-tab-label {
+    color: lighten($primary, 16%);
 }
 </style>
