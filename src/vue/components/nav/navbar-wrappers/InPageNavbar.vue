@@ -4,10 +4,13 @@
             brand-url="#"
             :link-list="linkList"
             :expandable="true"/>
+
+    <MobileTabBar :items="linkList"/>
 </template>
 
 <script setup>
 import Navbar from "/src/vue/components/nav/navbar/Navbar.vue"
+import MobileTabBar from "/src/vue/components/nav/MobileTabBar.vue"
 import {computed, inject, onMounted, onUnmounted, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {useLayout} from "/src/composables/layout.js"

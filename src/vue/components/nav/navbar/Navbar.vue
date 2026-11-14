@@ -11,9 +11,6 @@
             <NavbarLinks :items="props.linkList"
                          :collapsed="isCollapsed"
                          @link-clicked="_onLinkClicked"/>
-
-            <NavbarToggleButton :collapsed="isCollapsed"
-                                @click="_onToggleClicked"/>
         </div>
     </nav>
 </template>
@@ -23,7 +20,6 @@ import {onMounted, onUnmounted, ref, watch} from "vue"
 import Link from "/src/vue/components/generic/Link.vue"
 import NavbarBrand from "/src/vue/components/nav/navbar/NavbarBrand.vue"
 import NavbarLinks from "/src/vue/components/nav/navbar/NavbarLinks.vue"
-import NavbarToggleButton from "/src/vue/components/nav/navbar/NavbarToggleButton.vue"
 import {useRoute} from "vue-router"
 import {useUtils} from "/src/composables/utils.js"
 
@@ -58,10 +54,6 @@ watch(() => route.path, () => {
 
 const _onWindowEvent = () => {
     shouldExpand.value = props.expandable && window.scrollY === 0 && window.innerWidth >= utils.BOOTSTRAP_BREAKPOINTS.lg
-}
-
-const _onToggleClicked = () => {
-    isCollapsed.value = !isCollapsed.value
 }
 
 const _onLinkClicked = () => {

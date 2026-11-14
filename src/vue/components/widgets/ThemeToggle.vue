@@ -41,6 +41,11 @@ const isDark = computed(() => themeStore.mode === "dark")
         transform 0.15s ease,
         color 0.15s ease,
         background-color 0.15s ease;
+
+    /* 移动端让出底部 Tab 栏 */
+    @media (max-width: 991.98px) {
+        bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px) + 0.8rem);
+    }
 }
 
 .theme-toggle:hover {

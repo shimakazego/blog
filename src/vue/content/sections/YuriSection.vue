@@ -42,9 +42,19 @@
                         </button>
                     </div>
 
-                    <div class="yuri-toolbar-divider"/>
+                    <button type="button"
+                            class="yuri-filter-trigger"
+                            aria-label="打开筛选面板"
+                            @click="openFilterDrawer">
+                        <i class="pi pi-filter"/>
+                        <span>筛选</span>
+                        <span v-if="activeFilterCount"
+                              class="yuri-filter-trigger-count">{{ activeFilterCount }}</span>
+                    </button>
 
-                    <label class="yuri-filter-block">
+                    <div class="yuri-toolbar-divider yuri-desktop-only"/>
+
+                    <label class="yuri-filter-block yuri-desktop-only">
                         <span class="yuri-filter-label">年份</span>
                         <select v-model="selectedYear"
                                 class="yuri-select"
@@ -59,7 +69,7 @@
                         </select>
                     </label>
 
-                    <div class="yuri-rating-filter"
+                    <div class="yuri-rating-filter yuri-desktop-only"
                          role="group"
                          aria-label="按评分筛选">
                         <span class="yuri-filter-label">评分</span>
@@ -228,11 +238,89 @@
                 </div>
             </div>
         </PageSectionContent>
+
+        <!-- 移动端筛选抽屉（右侧折叠） -->
+        <Teleport to="body">
+            <Transition name="yuri-overlay">
+                <div v-if="filterDrawerOpen"
+                     class="yuri-drawer-overlay"
+                     aria-hidden="true"
+                     @click="closeFilterDrawer"/>
+            </Transition>
+
+            <Transition name="yuri-drawer">
+                <aside v-if="filterDrawerOpen"
+                       class="yuri-filter-drawer"
+                       role="dialog"
+                       aria-modal="true"
+                       aria-label="筛选作品">
+                    <header class="yuri-drawer-head">
+                        <span class="yuri-drawer-title">筛选作品</span>
+                        <button type="button"
+                                class="yuri-drawer-close"
+                                aria-label="关闭筛选"
+                                @click="closeFilterDrawer">
+                            <i class="pi pi-times"/>
+                        </button>
+                    </header>
+
+                    <div class="yuri-drawer-body">
+                        <div class="yuri-drawer-group">
+                            <p class="yuri-drawer-group-label">年份</p>
+                            <div class="yuri-chip-wrap">
+                                <button type="button"
+                                        class="yuri-chip"
+                                        :class="{'is-active': !selectedYear}"
+                                        @click="pickYear('')">
+                                    全部
+                                </button>
+                                <button v-for="year in yearOptions"
+                                        :key="`drawer-year-${year}`"
+                                        type="button"
+                                        class="yuri-chip"
+                                        :class="{'is-active': String(selectedYear) === String(year)}"
+                                        @click="pickYear(year)">
+                                    {{ year }}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="yuri-drawer-group">
+                            <p class="yuri-drawer-group-label">评分</p>
+                            <div class="yuri-chip-wrap">
+                                <button v-for="option in ratingOptions"
+                                        :key="`drawer-rating-${option.label}`"
+                                        type="button"
+                                        class="yuri-chip"
+                                        :class="{'is-active': selectedMinScore === option.value}"
+                                        @click="pickMinScore(option.value)">
+                                    {{ option.label }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <footer class="yuri-drawer-foot">
+                        <span class="yuri-drawer-result">共 {{ yuriWorksState.length }} 部</span>
+                        <button type="button"
+                                class="yuri-drawer-reset"
+                                @click="resetFilters">
+                            <i class="pi pi-filter-slash"/> 重置
+                        </button>
+                        <button type="button"
+                                class="yuri-drawer-done"
+                                @click="closeFilterDrawer">
+                            完成
+                        </button>
+                    </footer>
+                </aside>
+            </Transition>
+        </Teleport>
     </PageSection>
 </template>
 
 <script setup>
-import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
+import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import PageSection from "/src/vue/components/layout/PageSection.vue"
 import PageSectionHeader from "/src/vue/components/layout/PageSectionHeader.vue"
 import PageSectionContent from "/src/vue/components/layout/PageSectionContent.vue"
@@ -297,6 +385,48 @@ const hasActiveFilters = computed(() => {
     return Boolean(searchInput.value.trim()) ||
         Boolean(selectedYear.value) ||
         selectedMinScore.value !== null
+})
+
+/* ===== 移动端筛选抽屉 ===== */
+const filterDrawerOpen = ref(false)
+
+const activeFilterCount = computed(() => {
+    return (selectedYear.value ? 1 : 0) + (selectedMinScore.value !== null ? 1 : 0)
+})
+
+function openFilterDrawer() {
+    filterDrawerOpen.value = true
+}
+
+function closeFilterDrawer() {
+    filterDrawerOpen.value = false
+}
+
+function pickYear(value) {
+    selectedYear.value = value
+    applyFilters()
+}
+
+function pickMinScore(value) {
+    selectedMinScore.value = value
+    applyFilters()
+}
+
+const _onDrawerKeydown = (event) => {
+    if(event.key === "Escape") {
+        closeFilterDrawer()
+    }
+}
+
+watch(filterDrawerOpen, (open) => {
+    document.documentElement.style.overflow = open ? "hidden" : ""
+
+    if(open) {
+        window.addEventListener("keydown", _onDrawerKeydown)
+        return
+    }
+
+    window.removeEventListener("keydown", _onDrawerKeydown)
 })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(yuriWorksState.value.length / PAGE_SIZE)))
@@ -696,6 +826,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
     clearTimeout(searchTimer)
+    window.removeEventListener("keydown", _onDrawerKeydown)
+    document.documentElement.style.overflow = ""
 })
 </script>
 
@@ -850,6 +982,48 @@ onBeforeUnmount(() => {
     background: linear-gradient(135deg, #f472b6, #db2777);
     color: #ffffff;
     box-shadow: 0 6px 14px rgba(219, 39, 119, 0.35);
+}
+
+/* 移动端「筛选」触发按钮（桌面隐藏） */
+.yuri-filter-trigger {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    height: 2.6rem;
+    padding: 0 1rem;
+    border: none;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #f472b6, #db2777);
+    color: #ffffff;
+    font-size: 0.88rem;
+    font-weight: 800;
+    white-space: nowrap;
+    cursor: pointer;
+    box-shadow: 0 8px 18px rgba(219, 39, 119, 0.28);
+    transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+
+.yuri-filter-trigger:active {
+    transform: scale(0.97);
+}
+
+.yuri-filter-trigger .pi {
+    font-size: 0.82rem;
+}
+
+.yuri-filter-trigger-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.15rem;
+    height: 1.15rem;
+    padding: 0 0.3rem;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #be185d;
+    font-size: 0.68rem;
+    font-weight: 800;
 }
 
 /* ============ 结果信息 ============ */
@@ -1351,38 +1525,232 @@ section.yuri-section :deep(.foxy-section-header) {
         display: none;
     }
 
+    .yuri-quote-banner {
+        min-height: 0;
+        margin-bottom: 1rem;
+        border-radius: 0.85rem;
+        box-shadow: 0 10px 24px rgba(120, 60, 30, 0.16);
+    }
+
     .yuri-quote-body {
-        padding: 1rem 1.1rem;
+        padding: 0.6rem 0.9rem;
+        gap: 0.12rem;
     }
 
     .yuri-quote-text {
-        font-size: 1.15rem;
+        font-size: 0.98rem;
+        line-height: 1.45;
     }
 
     .yuri-quote-author {
-        font-size: 0.9rem;
+        font-size: 0.74rem;
+        padding-right: 0;
     }
 }
 
 /* ============ 响应式 ============ */
-@media (max-width: 575.98px) {
+@media (max-width: 991.98px) {
     .yuri-toolbar {
-        flex-direction: column;
-        align-items: stretch;
+        flex-wrap: nowrap;
+        gap: 0.5rem;
+        padding: 0.55rem 0.6rem;
+        border-radius: 1.15rem;
     }
 
-    .yuri-toolbar-divider {
-        display: none;
+    .yuri-search {
+        flex: 1 1 auto;
+        min-width: 0;
     }
 
-    .yuri-filter-block,
-    .yuri-rating-filter {
-        justify-content: center;
+    .yuri-search-icon {
+        left: 0.85rem;
     }
 
+    .yuri-search-input {
+        /* 16px 可避免 iOS 聚焦时自动放大页面 */
+        font-size: 1rem;
+        padding: 0.58rem 2.3rem;
+    }
+
+    .yuri-desktop-only {
+        display: none !important;
+    }
+
+    .yuri-filter-trigger {
+        display: inline-flex;
+    }
+
+    .yuri-meta {
+        margin: 0.15rem 0.15rem 0.9rem;
+    }
+}
+
+@media (max-width: 575.98px) {
     .yuri-detail-list {
         grid-template-columns: 1fr;
         gap: 0.16rem;
     }
+
+    section.yuri-section :deep(.foxy-section-header) {
+        margin-bottom: 0.9rem;
+    }
+}
+
+/* ============ 移动端筛选抽屉 ============ */
+.yuri-drawer-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    background: rgba(12, 10, 11, 0.5);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+}
+
+.yuri-filter-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10001;
+    width: min(86vw, 360px);
+    display: flex;
+    flex-direction: column;
+    padding: 0.95rem 1rem calc(0.95rem + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(180deg, #ffffff 0%, #fdf2f8 100%);
+    border-radius: 1.1rem 0 0 1.1rem;
+    box-shadow: -18px 0 50px rgba(76, 5, 25, 0.28);
+}
+
+.yuri-drawer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 0.7rem;
+    border-bottom: 1px solid rgba(219, 39, 119, 0.14);
+}
+
+.yuri-drawer-title {
+    color: #4c0519;
+    font-size: 1.02rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+}
+
+.yuri-drawer-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: none;
+    border-radius: 50%;
+    background: rgba(219, 39, 119, 0.1);
+    color: #be185d;
+    font-size: 0.78rem;
+    cursor: pointer;
+}
+
+.yuri-drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    padding: 0.95rem 0.1rem;
+}
+
+.yuri-drawer-group-label {
+    margin: 0 0 0.55rem;
+    color: #9d174d;
+    font-size: 0.82rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+}
+
+.yuri-chip-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+}
+
+.yuri-chip {
+    padding: 0.5rem 0.85rem;
+    border: 1px solid rgba(219, 39, 119, 0.2);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    color: #4c0519;
+    font-size: 0.86rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.yuri-chip.is-active {
+    background: linear-gradient(135deg, #f472b6, #db2777);
+    border-color: #db2777;
+    color: #ffffff;
+    box-shadow: 0 6px 14px rgba(219, 39, 119, 0.3);
+}
+
+.yuri-drawer-foot {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding-top: 0.8rem;
+    border-top: 1px solid rgba(219, 39, 119, 0.14);
+}
+
+.yuri-drawer-result {
+    margin-right: auto;
+    color: #9d174d;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.yuri-drawer-reset,
+.yuri-drawer-done {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.52rem 0.95rem;
+    border-radius: 999px;
+    font-size: 0.84rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.yuri-drawer-reset {
+    border: 1px solid rgba(219, 39, 119, 0.28);
+    background: rgba(255, 255, 255, 0.9);
+    color: #be185d;
+}
+
+.yuri-drawer-done {
+    border: none;
+    background: linear-gradient(135deg, #f472b6, #db2777);
+    color: #ffffff;
+    box-shadow: 0 8px 18px rgba(219, 39, 119, 0.3);
+}
+
+.yuri-drawer-enter-active,
+.yuri-drawer-leave-active {
+    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.yuri-drawer-enter-from,
+.yuri-drawer-leave-to {
+    transform: translateX(105%);
+}
+
+.yuri-overlay-enter-active,
+.yuri-overlay-leave-active {
+    transition: opacity 0.25s ease;
+}
+
+.yuri-overlay-enter-from,
+.yuri-overlay-leave-to {
+    opacity: 0;
 }
 </style>

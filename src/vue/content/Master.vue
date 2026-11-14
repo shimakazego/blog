@@ -59,6 +59,9 @@
     </FooterBlock>
   </Footer>
 
+  <!-- 移动端底部 Tab 栏遮挡补偿（仅移动端显示） -->
+  <div v-if="showSiteChrome" class="mobile-tabbar-space" aria-hidden="true"/>
+
   <ThemeToggle/>
 </template>
 
@@ -93,6 +96,15 @@ const showSiteChrome = computed(() => !route.meta.hideSiteChrome);
     a:hover {
         color: $white;
         text-decoration: underline;
+    }
+}
+
+.mobile-tabbar-space {
+    display: none;
+
+    @include media-breakpoint-down(lg) {
+        display: block;
+        height: calc(3.5rem + env(safe-area-inset-bottom, 0px));
     }
 }
 </style>

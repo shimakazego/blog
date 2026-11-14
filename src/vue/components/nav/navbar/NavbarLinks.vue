@@ -73,6 +73,13 @@ const _onLinkClicked = () => {
 <style lang="scss" scoped>
 @import "/src/scss/_theming.scss";
 
+div.foxy-navbar-links-wrapper {
+    /* 移动端导航改为底部常驻 Tab 栏，顶部旧版折叠菜单不再使用 */
+    @include media-breakpoint-down(lg) {
+        display: none;
+    }
+}
+
 ul.foxy-navbar-links {
     list-style: none;
     margin: 0;
